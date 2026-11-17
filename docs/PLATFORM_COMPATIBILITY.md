@@ -3,13 +3,13 @@
 
 > **v3.2.8 起下线 11 个平台**：花椒（官方不再返回直播列表）、OPENREC / mellow-fan（接口 403、无目录）、TTingLive / FLEX TV（目录仅剩 1 个房间）、PopkonTV（目录以成人直播为主，详情不可用）、GoodGame（连接超时）、VK Video Live（播放地址与 IP 绑定，频繁 403）、Dailymotion（直播内容少，CDN 拒绝代理 IP）、Rumble（Cloudflare 人机验证）、NimoTV（依赖 WebView，CDN 间歇 403）、Shopee Live（反爬 WebView 会话、特殊 HEVC 编码，分享链接冷启动无法打开）、淘宝直播（无公开目录，仅链接）。依据：2026-09-26 全平台探针、近两个月维护记录与真机实测。下文中这些平台的说明仅作历史记录；已关注的这些主播仍保留，打开时提示平台已下线。
 
-> **v3.2.11 下线 Kick**：kick.com 的全部接口由 Cloudflare 按 TLS 指纹拦截，只能靠 Android 系统 TLS 与 Windows WinHTTP 两条原生通道绕过，Linux、macOS、iOS 无法使用，且随时可能失效。下文 Kick 的说明仅作历史记录。
+> **Kick 仅在 Windows 恢复**：3.2.11 曾因 Cloudflare 按 TLS 指纹拦截全部 kick.com 接口而下线。当前分支仅在 Windows 构建中重新注册 Kick，通过 WinHTTP/Schannel 访问公开目录、搜索、房间与 Pusher 聊天；媒体仍由普通 dart:io/dio 拉取 `*.live-video.net`。Windows 之外的构建不显示 Kick 入口，已保存的 Kick 房间按退役平台处理。该通道依赖 Cloudflare 当前放行 Schannel，随时可能失效；下文 Kick 的能力说明仅适用于 Windows。本批结果与交接见[Kick Windows 恢复结果](KICK_WINDOWS_RESTORE_2026_11_18.md)和[AI 技术交接](KICK_WINDOWS_RESTORE_HANDOFF_2026_11_18.md)。
 
 本文记录 Pure Live 当前使用的直播接口、数据含义和本地验证方法。平台网页可能随时调整，合并接口改动前应执行一次探测脚本。
 
 ## 当前平台能力
 
-3.2.11 起按 `lib/core/sites.dart` 核对：当前源码注册 **33 个直播站点 + IPTV，共 34 个适配器**（2026-09-22 时为 45 站）。这是源码注册数量，不是已发布包或完整验收数量。小红书、niconico、微博、SHOWROOM、CHZZK、Kick、17LIVE、LiveMe、TikTok LIVE、YouTube Live、Bigo Live、PandaTV、PopkonTV、Shopee Live、VK Video Live、NimoTV、Dailymotion、Rumble、GoodGame、FC2 Live、Steam Broadcasts、京东直播、淘宝直播、酷狗直播、百度直播、六间房直播和 LOOK 直播已接入应用入口；原生整体验收继续，当前候选与完整剩余范围以[验收状态](ACCEPTANCE_STATUS_3_2_0.md)为准。
+按 `lib/domains/live/data/platforms/sites.dart` 核对：Windows 构建注册 **34 个直播站点 + IPTV，共 35 个适配器**；其他平台仍为 33 个直播站点 + IPTV，Kick 只在 Windows 进入注册表。这是源码注册数量，不是已发布包或完整验收数量。小红书、niconico、微博、SHOWROOM、CHZZK、Kick（仅 Windows）、17LIVE、LiveMe、TikTok LIVE、YouTube Live、Bigo Live、PandaTV、PopkonTV、Shopee Live、VK Video Live、NimoTV、Dailymotion、Rumble、GoodGame、FC2 Live、Steam Broadcasts、京东直播、淘宝直播、酷狗直播、百度直播、六间房直播和 LOOK 直播已接入应用入口；原生整体验收继续，当前候选与完整剩余范围以[验收状态](ACCEPTANCE_STATUS_3_2_0.md)为准。
 
 2026-09-23 房间页“外部打开”也已与注册表对齐：此前 14 个新增站点缺少官方房间 URL 映射，操作会落到 `unavailable`；现在 45 个直播站点均有按稳定房间身份重建的官方目标，IPTV 不存在远端官方房间页。构造、无效 ID 与启动动作的定向证据见[外部打开覆盖审计](ROOM_EXTERNAL_OPEN_COVERAGE_AUDIT_2026_09_23.md)；这只是源码动作合同，外部浏览器/客户端实际落地仍待当前候选双端验证。
 
@@ -62,7 +62,7 @@ TwitCasting 新增公开目录、顶栏分类、详情/HLS三档、录制输入�
 | 微博直播 | 有限公开推荐快照，目录直播状态保持未知 | 精确场次 ID/官方观看 URL，含回放元数据；当前公开推荐快照可按昵称筛选，不宣称全站主播搜索或分页查询 | 当前未接入 | 未取得人数，保持未知；不把 UID/互动数当观众数 |
 | SHOWROOM | 官网公开 onlives 快照与原生分类 | 同一直播快照内的直播关键词分页；直播间链接可查询未开播状态 | 当前未接入 | `view_num` 作为本场累计观看，不当作并发在线人数 |
 | CHZZK | 官方公开热门直播游标目录 | 原生频道搜索，包含开播和未开播频道 | 当前未接入 | `cvExposure=true` 时展示 `concurrentUserCount` 并发人数，否则保持未知 |
-| Kick | 官方公开直播分页 | 原生有界搜索，直播匹配和未开播频道合并去重 | [公开 Pusher 聊天](KICK_PUBLIC_CHAT_AUDIT_2026_09_23.md)；解析独立 chatroom ID，确认订阅后接收聊天，双端原生消息验收待执行 | `show_view_count=false` 时保持未知，其他公开 `viewer_count` 作为并发人数 |
+| Kick（仅 Windows） | 官方公开直播分页；非 Windows 平台不注册 | 原生有界搜索，直播匹配和未开播频道合并去重 | [公开 Pusher 聊天](KICK_PUBLIC_CHAT_AUDIT_2026_09_23.md)；解析独立 chatroom ID，确认订阅后接收聊天；Windows 原生通道已恢复，当前候选的真实观看与聊天仍待验收 | `show_view_count=false` 时保持未知，其他公开 `viewer_count` 作为并发人数 |
 | 17LIVE | 官网日本区公开推荐 sections，保留原生游标；只展示已核验当前直播，不宣称全站目录 | 官网当前直播关键词有限窗口，不含未开播昵称；精确房间号及官方直播间/主播主页链接仍可返回未开播状态 | 当前未接入 | `liveViewerCount` 为当前观看，`viewerCount` 为本场累计观看，分别展示 |
 | LiveMe | 官网公开热门目录，保留原生分页 | 原生主播关键词分页，包含未开播主播；直播间、主播主页和旧场次链接可回流为稳定短号 | 当前未接入 | `heat` 为平台热度、`playnumber` 为当前观看、`watchnumber` 为本场累计观看，三者分列 |
 | TikTok LIVE | 游客推荐目录依赖网页会话，当前页面保留明确范围说明 | 精确账号、@账号、官方主页/直播间/直播分享链接；可返回未开播账号 | 当前未接入 | `liveRoomStats.userCount` 为当前观看，`enterCount` 为累计进房，分别展示 |
