@@ -145,6 +145,12 @@ class LiveRoom {
       hasTotalViewers: false,
       onlineAvailability: AudienceOnlineAvailability.roomList,
     ),
+    // Kick's directory and room detail expose viewer_count as concurrent viewers.
+    'kick': AudiencePlatformCapability(
+      hasPopularity: false,
+      hasTotalViewers: false,
+      onlineAvailability: AudienceOnlineAvailability.roomList,
+    ),
     // The room detail keeps current liveViewerCount separate from cumulative viewerCount.
     '17live': AudiencePlatformCapability(
       hasPopularity: false,

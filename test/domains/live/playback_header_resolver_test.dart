@@ -50,6 +50,18 @@ void main() {
       expect(resolved['referer'], 'https://iptv.example/channel');
     });
 
+    test('Kick 媒体头指向频道页，房间声明不覆盖它', () async {
+      final resolved = await PlaybackHeaderResolver.resolve(
+        platform: Sites.kickSite,
+        roomId: 'Fixture',
+        roomHeaders: const <String, String>{'referer': 'https://example.invalid/room'},
+      );
+
+      expect(resolved['referer'], 'https://kick.com/fixture/');
+      expect(resolved['origin'], 'https://kick.com');
+      expect(resolved['user-agent'], isNotEmpty);
+    });
+
     test('什么都没声明时仍然是空表，不会凭空造头', () async {
       expect(await PlaybackHeaderResolver.resolve(platform: Sites.lookLiveSite, roomId: '123456'), isEmpty);
     });

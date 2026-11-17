@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:pure_live/shared/platforms/yy/yy_site.dart';
 import 'package:dio/dio.dart';
 import 'package:pure_live/shared/platforms/bigo/bigo_site.dart';
@@ -8,6 +10,7 @@ import 'package:pure_live/shared/platforms/huya/huya_site.dart';
 import 'package:pure_live/shared/platforms/live_site.dart';
 
 import 'package:pure_live/shared/platforms/chzzk/chzzk_site.dart';
+import 'package:pure_live/shared/platforms/kick/kick_site.dart';
 import 'package:pure_live/shared/platforms/fc2live/fc2_site.dart';
 import 'package:pure_live/shared/platforms/weibo/weibo_site.dart';
 import 'package:pure_live/shared/platforms/acfun/acfun_site.dart';
@@ -113,8 +116,9 @@ class Sites {
   static const String sixRoomSite = 'sixroom';
   static const String lookLiveSite = 'looklive';
   static const String seventeenLiveSite = '17live';
+  static const String kickSite = 'kick';
 
-  static const Set<String> supportedSiteIds = {
+  static const Set<String> _baseSupportedSiteIds = {
     weiboSite,
     niconicoSite,
     bilibiliSite,
@@ -151,6 +155,10 @@ class Sites {
     iptvSite,
   };
 
+  /// Kick's Cloudflare edge only accepts the Windows WinHTTP/Schannel TLS
+  /// fingerprint; keep the platform invisible on every other target.
+  static final Set<String> supportedSiteIds = {..._baseSupportedSiteIds, if (Platform.isWindows) kickSite};
+
   /// Root directory for all platform artwork.
   static const String _assetRoot = 'assets/images';
 
@@ -184,6 +192,7 @@ class Sites {
     weiboSite: '$_assetRoot/weibo.png',
     showroomSite: '$_assetRoot/showroom.png',
     chzzkSite: '$_assetRoot/chzzk.png',
+    kickSite: '$_assetRoot/kick.png',
     pandaLiveSite: '$_assetRoot/panda.png',
     fc2LiveSite: '$_assetRoot/fc2.png',
     steamBroadcastSite: '$_assetRoot/steam.png',
@@ -202,9 +211,10 @@ class Sites {
   static bool isSupported(String id) => supportedSiteIds.contains(id.trim().toLowerCase());
 
   /// Platforms removed in 3.2.8 (hard to maintain, niche or no longer usable)
-  /// and 3.2.11 (Kick: Cloudflare blocks it outside Android/Windows TLS).
-  /// Saved follows, history and links for them stay readable and are shown as
-  /// retired instead of failing as unknown.
+  /// and 3.2.11 (Kick). Kick is back in the registry on Windows, where the
+  /// WinHTTP/Schannel channel passes Cloudflare's TLS check; other targets keep
+  /// treating it as retired. Saved follows, history and links stay readable
+  /// instead of failing as unknown.
   static const Set<String> retiredSiteIds = {
     'huajiao',
     'openrec',
@@ -220,7 +230,10 @@ class Sites {
     'kick',
   };
 
-  static bool isRetired(String id) => retiredSiteIds.contains(id.trim().toLowerCase());
+  static bool isRetired(String id) {
+    final normalizedId = id.trim().toLowerCase();
+    return !isSupported(normalizedId) && retiredSiteIds.contains(normalizedId);
+  }
 
   /// Web hosts of the retired platforms, so a shared link can be answered with
   /// "retired" instead of being ignored as unrecognised text.
@@ -246,6 +259,7 @@ class Sites {
   static bool isRetiredLink(String text) {
     for (final match in RegExp(r'https?://[^\s]+', caseSensitive: false).allMatches(text)) {
       final host = Uri.tryParse(match.group(0)!)?.host.toLowerCase() ?? '';
+      if ((host == 'kick.com' || host.endsWith('.kick.com')) && isSupported(kickSite)) continue;
       if (_retiredHosts.any((h) => host == h || host.endsWith('.$h'))) return true;
     }
     return false;
@@ -254,7 +268,7 @@ class Sites {
   static String logoForId(String id) {
     final normalizedId = id.trim().toLowerCase();
     // Retired platforms keep a neutral badge so saved follows still render.
-    if (retiredSiteIds.contains(normalizedId)) return '$_assetRoot/logo.png';
+    if (isRetired(normalizedId)) return '$_assetRoot/logo.png';
     if (!supportedSiteIds.contains(normalizedId)) throw StateError('Unsupported live site: $normalizedId');
     return _logos[normalizedId] ?? '$_assetRoot/logo.png';
   }
@@ -339,6 +353,7 @@ class Sites {
         liveSite: ShowroomSite(),
       ),
       chzzkSite => Site(id: chzzkSite, name: i18n('site_chzzk'), logo: logoForId(chzzkSite), liveSite: ChzzkSite()),
+      kickSite => Site(id: kickSite, name: i18n('site_kick'), logo: logoForId(kickSite), liveSite: KickSite()),
       liveMeSite => Site(
         id: liveMeSite,
         name: i18n('site_liveme'),
@@ -443,6 +458,7 @@ class Sites {
       weiboSite,
       showroomSite,
       chzzkSite,
+      if (Platform.isWindows) kickSite,
       liveMeSite,
       tiktokSite,
       youtubeSite,

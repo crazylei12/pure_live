@@ -13,6 +13,7 @@ import 'package:pure_live/shared/platforms/inke/inke_api.dart';
 import 'package:pure_live/shared/platforms/kilakila/kilakila_api.dart';
 import 'package:pure_live/shared/platforms/showroom/showroom_api.dart';
 import 'package:pure_live/shared/platforms/chzzk/chzzk_api.dart';
+import 'package:pure_live/shared/platforms/kick/kick_api.dart';
 import 'package:pure_live/shared/platforms/liveme/liveme_api.dart';
 import 'package:pure_live/shared/platforms/tiktok/tiktok_api.dart';
 import 'package:pure_live/shared/platforms/youtube/youtube_api.dart';
@@ -172,6 +173,9 @@ class PlaybackHeaderResolver {
         break;
       case Sites.chzzkSite:
         headers = ChzzkApi.mediaHeaders;
+        break;
+      case Sites.kickSite:
+        headers = KickApi.mediaHeaders(roomId);
         break;
       case Sites.seventeenLiveSite:
         headers = SeventeenLiveApi.mediaHeaders(roomId);

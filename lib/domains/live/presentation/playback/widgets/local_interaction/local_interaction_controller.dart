@@ -410,6 +410,14 @@ class LocalInteractionController extends GetxController implements DanmakuLocalI
       badge: '🎮',
     ),
     LocalPlatformPack(
+      id: Sites.kickSite,
+      nameKey: 'site_kick',
+      currencyKey: 'local_currency_generic',
+      levelKey: 'local_level_generic',
+      accentColor: Color(0xFF53FC18),
+      badge: '🟢',
+    ),
+    LocalPlatformPack(
       id: Sites.seventeenLiveSite,
       nameKey: 'site_17live',
       currencyKey: 'local_currency_generic',

@@ -3,6 +3,7 @@ import 'package:pure_live/shared/platforms/inke/inke_api.dart';
 import 'package:pure_live/shared/platforms/bigo/bigo_link.dart';
 import 'package:pure_live/shared/platforms/weibo/weibo_link.dart';
 import 'package:pure_live/shared/platforms/chzzk/chzzk_link.dart';
+import 'package:pure_live/shared/platforms/kick/kick_link.dart';
 import 'package:pure_live/shared/platforms/fc2live/fc2_link.dart';
 import 'package:pure_live/shared/platforms/liveme/liveme_link.dart';
 import 'package:pure_live/shared/platforms/tiktok/tiktok_link.dart';
@@ -89,6 +90,8 @@ class WebSearchRoomParser {
     if (showroom != null) return WebSearchRoomTarget(platform: Sites.showroomSite, roomId: showroom);
     final chzzk = ChzzkLink.parse(rawUrl);
     if (chzzk != null) return WebSearchRoomTarget(platform: Sites.chzzkSite, roomId: chzzk);
+    final kick = KickLink.parse(rawUrl);
+    if (kick != null) return WebSearchRoomTarget(platform: Sites.kickSite, roomId: kick);
     final seventeenLive = SeventeenLiveLink.parse(rawUrl);
     if (seventeenLive != null) {
       return WebSearchRoomTarget(platform: Sites.seventeenLiveSite, roomId: seventeenLive);
