@@ -10,7 +10,9 @@ import 'package:pure_live/domains/live/presentation/playback/dialogs/play_other.
 import 'package:pure_live/domains/live/presentation/playback/dialogs/room_timer_dialog.dart';
 import 'package:pure_live/domains/live/presentation/playback/dialogs/room_volume_dialog.dart';
 import 'package:pure_live/domains/live/presentation/playback/dialogs/known_room_link_dialog.dart';
+import 'package:pure_live/domains/live/presentation/playback/dialogs/mirror_danmaku_dialog.dart';
 import 'package:pure_live/domains/live/presentation/playback/controllers/live_play_controller.dart';
+import 'package:pure_live/domains/live/data/platforms/sites.dart';
 import 'package:pure_live/domains/live/presentation/playback/widgets/local_interaction/local_interaction_sheet.dart';
 
 class LivePlayMenuButton extends StatelessWidget {
@@ -75,6 +77,10 @@ class LivePlayMenuButton extends StatelessWidget {
 
       case 8:
         _openNewWindow();
+        break;
+
+      case 9:
+        _showMirrorDanmaku(context);
         break;
     }
 
@@ -163,6 +169,22 @@ class LivePlayMenuButton extends StatelessWidget {
     );
   }
 
+  bool get _canConfigureMirrorDanmaku {
+    final detail = controller.state.value.room.detail;
+    if (detail == null || !detail.isLiveNow || detail.isRecord == true || detail.isCatchUpActive) return false;
+    final platform = detail.normalizedPlatformId;
+    if (platform == Sites.iptvSite || platform == Sites.ccSite) return false;
+    return Sites.supportsDanmakuTransport(platform);
+  }
+
+  void _showMirrorDanmaku(BuildContext context) {
+    if (!_canConfigureMirrorDanmaku) {
+      ToastUtil.show(i18n('mirror_danmaku_unavailable'));
+      return;
+    }
+    unawaited(MirrorDanmakuDialog.show(context: context, controller: controller));
+  }
+
   void _openNewWindow() {
     final detail = controller.state.value.room.detail;
 
@@ -202,12 +224,15 @@ class LivePlayMenuButton extends StatelessWidget {
         _item(value: 7, icon: Icons.auto_awesome_rounded, text: i18n('local_interaction_title')),
 
       if (Platform.isWindows) _item(value: 8, icon: Icons.open_in_new_rounded, text: i18n('open_room_in_new_window')),
+
+      _item(value: 9, icon: Icons.sync_rounded, text: i18n('mirror_danmaku'), enabled: _canConfigureMirrorDanmaku),
     ];
   }
 
-  PopupMenuItem<int> _item({required int value, required IconData icon, required String text}) {
+  PopupMenuItem<int> _item({required int value, required IconData icon, required String text, bool enabled = true}) {
     return PopupMenuItem<int>(
       value: value,
+      enabled: enabled,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: MenuListTile(leading: Icon(icon, size: 20), text: text),
     );

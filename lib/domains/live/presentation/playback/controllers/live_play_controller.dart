@@ -23,6 +23,8 @@ import 'package:pure_live/domains/live/presentation/playback/controllers/player_
 import 'package:pure_live/core/config/app_settings_controller.dart';
 import 'package:pure_live/domains/live/presentation/playback/controllers/danmaku_controller.dart';
 import 'package:pure_live/domains/live/presentation/playback/controllers/danmaku_session_host.dart';
+import 'package:pure_live/domains/live/presentation/playback/controllers/mirror_danmaku_controller.dart';
+import 'package:pure_live/domains/live/presentation/playback/controllers/mirror_danmaku_host.dart';
 import 'package:pure_live/domains/live/presentation/playback/widgets/danmaku/danmaku_list_view.dart';
 import 'package:pure_live/domains/live/presentation/playback/widgets/video_player/video_controller.dart';
 import 'package:pure_live/domains/live/presentation/playback/controllers/danmaku_presentation_recovery.dart';
@@ -60,9 +62,53 @@ String roomStateMessage(LiveRoom room) {
 String unknownRoomStatusMessage(LiveRoom? room) =>
     room != null && room.isRestricted ? roomStateMessage(room) : i18n('get_room_info_failed_retry');
 
+/// Mirrors one already-normalized chat message into the room surfaces that
+/// normally receive the host platform's own messages. The message is never
+/// copied or prefixed, so ids, emote spans and retraction identity survive.
+@visibleForTesting
+void deliverMirrorChatToRoom(
+  LiveMessage message, {
+  required void Function(LiveMessage message) addToHistory,
+  required void Function(LiveMessage message)? addToVideo,
+  required void Function(LiveMessage message) addToFloating,
+}) {
+  addToHistory(message);
+  addToVideo?.call(message);
+  addToFloating(message);
+}
+
+@visibleForTesting
+LiveMessage mirrorSystemMessage(String text) {
+  return LiveMessage(
+    type: LiveMessageType.chat,
+    userName: i18n('system_message'),
+    message: text,
+    color: LiveMessageColor.white,
+  );
+}
+
+/// Delivers a mirror status line to the surface that still owns the session.
+/// Once the route is closed only the app floating window remains, so the line
+/// must go there instead of being dropped by the closed history controller.
+@visibleForTesting
+void deliverMirrorSystemMessage(
+  String text, {
+  required bool isClosed,
+  required bool keepsFloating,
+  required void Function(LiveMessage message) addToHistory,
+  required void Function(LiveMessage message) addToFloating,
+}) {
+  final message = mirrorSystemMessage(text);
+  if (isClosed) {
+    if (keepsFloating) addToFloating(message);
+    return;
+  }
+  addToHistory(message);
+}
+
 class LivePlayController extends GetxController
     with GetSingleTickerProviderStateMixin, WidgetsBindingObserver
-    implements DanmakuSessionHost, PlayerSessionHost {
+    implements DanmakuSessionHost, PlayerSessionHost, MirrorDanmakuHost {
   LivePlayController({required this.room, required this.site}) : _iptvPlayerStarter = null;
 
   @visibleForTesting
@@ -74,6 +120,7 @@ class LivePlayController extends GetxController
 
   late final TimerController timerController;
   late final DanmakuController danmakuController;
+  late final MirrorDanmakuController mirrorDanmakuController;
   late final PlayerController playerController;
 
   final RecorderController recorderController = Get.find<RecorderController>();
@@ -242,11 +289,22 @@ class LivePlayController extends GetxController
         stackTrace: stackTrace,
       );
     }
+    try {
+      await mirrorDanmakuController.ensureConnected();
+    } catch (error, stackTrace) {
+      developer.log(
+        'Mirror danmaku recovery after PiP/foreground failed',
+        name: 'LivePlayController',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   void _initControllers() {
     timerController = Get.put(TimerController(onEnded: _onRoomPlaybackTimerEnded), tag: 'timer-$_controllerTag');
     danmakuController = Get.put(DanmakuController(this), tag: 'danmaku-$_controllerTag');
+    mirrorDanmakuController = MirrorDanmakuController(host: this, hideDanmaku: SettingsService.to.danmaku.hideDanmaku);
     playerController = Get.put(PlayerController(this), tag: 'player-$_controllerTag');
 
     playerController.initSite(currentSite);
@@ -308,6 +366,7 @@ class LivePlayController extends GetxController
 
     updateRoom(liveroom: session.room, isLiving: session.isLiving, success: true, isLoading: false, loadError: null);
     await _syncDanmakuConnection(session.room);
+    await mirrorDanmakuController.attachHost(session.room);
     unawaited(_refreshResumedRoomMetadata(session.room));
   }
 
@@ -669,13 +728,7 @@ class LivePlayController extends GetxController
 
   @override
   void addSystemMessage(String text) {
-    final msg = LiveMessage(
-      type: LiveMessageType.chat,
-      userName: i18n('system_message'),
-      message: text,
-      color: LiveMessageColor.white,
-    );
-    addDanmakuMessage(msg);
+    addDanmakuMessage(mirrorSystemMessage(text));
   }
 
   void clearDanmakuMessages() {
@@ -798,6 +851,7 @@ class LivePlayController extends GetxController
       }
 
       await _syncDanmakuConnection(liveRoom);
+      await mirrorDanmakuController.attachHost(liveRoom);
     } catch (error, stackTrace) {
       developer.log(
         'Live room initialization failed (${error.runtimeType})',
@@ -824,6 +878,7 @@ class LivePlayController extends GetxController
 
   Future<void> _handleNotLiveRoom(LiveRoom liveRoom) async {
     unawaited(danmakuController.stopDanmaku());
+    unawaited(mirrorDanmakuController.detachHost());
     clearSuperChats();
     updateRoom(success: false, isLiving: false);
     setNormalScreen();
@@ -867,6 +922,7 @@ class LivePlayController extends GetxController
       return;
     }
     unawaited(danmakuController.stopDanmaku());
+    unawaited(mirrorDanmakuController.detachHost());
     if (Get.currentRoute == '/live_play') {
       ToastUtil.show(message);
       setNormalScreen();
@@ -915,6 +971,7 @@ class LivePlayController extends GetxController
     } catch (error, stackTrace) {
       developer.log('IPTV danmaku cleanup failed', name: 'LivePlayController', error: error, stackTrace: stackTrace);
     }
+    await mirrorDanmakuController.detachHost();
     return started;
   }
 
@@ -940,6 +997,7 @@ class LivePlayController extends GetxController
     if (!sameRoom) {
       clearDanmakuMessages();
       await danmakuController.stopDanmaku();
+      await mirrorDanmakuController.detachHost();
     }
 
     final manager = GlobalPlayerService.instance.player;
@@ -1119,6 +1177,42 @@ class LivePlayController extends GetxController
   bool get keepsDanmakuForFloating =>
       _floatingHandoffPrepared || GlobalPlayerService.instance.player.shouldKeepDanmakuForAppFloating;
 
+  @override
+  String get hostIdentity => state.value.room.detail?.identityKey ?? room.identityKey;
+
+  @override
+  bool get isHostCurrent => !_ownerClosed || keepsDanmakuForFloating;
+
+  @override
+  bool get keepsMirrorDanmakuForFloating => keepsDanmakuForFloating;
+
+  @override
+  void applyMirrorChat(LiveMessage msg) {
+    if (isClosed) {
+      if (keepsDanmakuForFloating) {
+        GlobalPlayerService.instance.player.sendFloatingDanmaku(msg);
+      }
+      return;
+    }
+    deliverMirrorChatToRoom(
+      msg,
+      addToHistory: addDanmakuMessage,
+      addToVideo: state.value.player.videoController?.sendDanmaku,
+      addToFloating: GlobalPlayerService.instance.player.sendFloatingDanmaku,
+    );
+  }
+
+  @override
+  void addMirrorSystemMessage(String text) {
+    deliverMirrorSystemMessage(
+      text,
+      isClosed: isClosed,
+      keepsFloating: keepsMirrorDanmakuForFloating,
+      addToHistory: addDanmakuMessage,
+      addToFloating: GlobalPlayerService.instance.player.sendFloatingDanmaku,
+    );
+  }
+
   /// Sticky record of "this room is being handed to the small window".
   ///
   /// The facade's answer is the live truth, but it is read while the route is
@@ -1188,6 +1282,7 @@ class LivePlayController extends GetxController
   }
 
   Future<void> _disposeAppFloatingResourcesAsync(VideoController? videoController) async {
+    await mirrorDanmakuController.dispose();
     await danmakuController.stopDanmaku();
     videoController?.dispose();
     if (_ownerClosed) {
@@ -1227,6 +1322,7 @@ class LivePlayController extends GetxController
     _pendingDanmakuMessages.clear();
     tabController.dispose();
     unawaited(_danmakuRemovals.close());
+    mirrorDanmakuController.onClose();
 
     final keepForAppFloating = GlobalPlayerService.instance.player.shouldKeepDanmakuForAppFloating;
     if (!keepForAppFloating) {
