@@ -1,225 +1,219 @@
-# Kick 恢复（Windows + Android）AI 技术交接
+# Kick 弹幕修复（Windows）AI 技术交接
 
-2026-11-18 · 源码基线 `d7d9c3e8d` · 分支 `master`
+2026-11-18 · 源码基线 `302e44c92` · 分支 `master`
 
 ## 1. 最新有效需求与边界
 
 用户当前要求：
 
-1. 停止继续做 UI/设备验证，验证由用户自己完成。
-2. 提交并推送当前源码。
-3. 生成 Windows 安装包和 Android 安装包（APK）并交付路径。
+1. **先修 Kick 弹幕**，目标是 Windows 端能收到公开聊天。
+2. 交付可用的 Windows 安装包。
+3. **Kick 播放卡顿问题暂缓**；用户已明确说“卡的问题不用管了，先修弹幕”。没有新指示前不要恢复卡顿调查。
 
 本批有效范围：
 
-- 在 Android 恢复 Kick 支持：`kick.com` 的 JSON 请求走 Android 原生 `HttpURLConnection`，媒体仍走 dart:io/dio。
-- 保留此前 Windows WinHTTP/Schannel 恢复，不改变其行为。
-- 不新增 iOS/Linux/macOS Kick 通道；这些平台继续按退役平台处理。
-- 用户没有要求版本递增、GitHub Release 或附件上传，本批没有做。
-- 旧的“Kick 仅 Windows”要求已被本批 Android 恢复覆盖；“不要顺带新增 Android 通道”的旧边界不再有效。
+- 只修公开弹幕接收链路，不发送聊天消息。
+- Windows 优先；共享 `KickDanmaku` 的实现会同时影响 Android 源码，但本轮没有重建 Android APK。
+- 不改变播放器、清晰度、媒体请求头、卡顿策略或录制链路。
+- 不递增版本、不创建 GitHub Release、不上传附件、不刷新 `assets/releases.json`。
+- 没有当前明确的设备请求，不做 ADB、真机、模拟器或 Windows GUI 安装/启动验收。
 
-## 2. 工作区、Git 与发布状态
+## 2. 工作区、Git 与状态
 
 - 工作区：`D:\purelive`；分支 `master`。
-- 本批源码提交：`d7d9c3e8d490130600effdd6cf2412499926e8f8` `feat(kick): 支持 Android 原生 TLS 通道恢复 Kick`，7 个文件，+77/−38。
-- 上一源码基线：`f366da1f6`（`docs: 补充 fork 远端 head 查询说明`）。
+- 源码提交：`302e44c92ad7c7bf6a98d8374ce28f3d3e935d48` `fix(kick): 迁移公开弹幕到 Centrifugo 实时网关`，4 个文件，+514/−77。
+- 上一源码基线：`cccae4bb1` `docs: 记录 Kick Android 恢复与双平台安装包`。
+- 更早的 Kick Android/Windows 恢复基线：`d7d9c3e8d`。
 - 远端：
-  - `origin` = `https://github.com/liuchuancong/pure_live.git`，仍无写权限（403）。
-  - `upstream` = `https://github.com/Jackiu1997/pure_live.git`，只读。
   - `fork` = `https://github.com/crazylei12/pure_live.git`，本批推送目标。
-- **推送状态：源码提交已推送到 `fork/master`。** 远端 head 已核对为 `d7d9c3e8d490130600effdd6cf2412499926e8f8`。
-- 本文档和 `docs/PLATFORM_COMPATIBILITY.md` 的更新作为后续 `docs:` 提交推送；文档自身哈希以 `git log` 为准。文档提交不改变应用源码基线。
+  - `origin` = `https://github.com/liuchuancong/pure_live.git`，历史记录显示无写权限（403）；本批没有推送它。
+  - `upstream` = `https://github.com/Jackiu1997/pure_live.git`，只读。
+- **推送状态：源码提交已推送到 `fork/master`。** 远端 head 已核对为 `302e44c92ad7c7bf6a98d8374ce28f3d3e935d48`。
+- 文档更新将作为后续 `docs:` 提交推送；其哈希以 `git log` 为准。文档提交不改变应用源码基线。
+- 工作区只剩未跟踪的 `.lcode/`；不要提交、不要删除其中的历史草稿。
 - 没有版本 tag、GitHub Release、附件上传或 `assets/releases.json` 更新。
-- 工作区只剩未跟踪的 `.lcode/` 草稿目录；不要提交。
 
-## 3. 本批源码改动
+## 3. 根因与协议事实
 
-### 3.1 Android 原生通道
+### 3.1 旧链路的第一错状态
 
-文件：`android/app/src/main/kotlin/com/mystyle/pure_live/NativeHttpChannel.kt`
+旧实现连接：
 
-- `onMethodCall` 新增 `"getKickJson" -> ::executeKickGet`。
-- 新增 `executeKickGet(call)`：
-  - 只接受 `https` 且 host 为 `kick.com` 的 URL。
-  - `requestMethod = "GET"`，`doOutput = false`。
-  - 调用 `openConnection(call, url)` 复用超时、代理、重定向、缓存配置。
-  - 调用 `applyHeaders` 注入请求头。
-  - 返回 `mapOf("statusCode" to statusCode, "body" to responseBody)`。
-  - 2xx 读 `inputStream`，非 2xx 读 `errorStream`；沿用 `readBoundedUtf8` 的 8 MB 上限。
-- 抽出 `openConnection(call, url)`：超时 1–60 秒（默认 20 秒），支持应用代理，`instanceFollowRedirects=false`、`useCaches=false`、`doInput=true`。
-- 抽出 `applyHeaders(connection, headers)`：过滤空名、`DISALLOWED_HEADERS`、含 CR/LF 的值。
-- `executeTwitchPost` 改为复用 `openConnection` 和 `applyHeaders`；仍然只允许 `https://gql.twitch.tv`，仍然默认 `Content-Type: application/json`，行为未改变。
-- 原生层仍然只放行两个固定主机：`kick.com` 和 `gql.twitch.tv`。不要放宽为任意主机。
+`wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?...`
 
-### 3.2 Dart 平台门控
+并订阅 `chatrooms.<id>.v2`。本轮实测 `ws-us2`、`ws-us3`、`ws-eu`、`ws-ap1`、`ws-ap2`、`ws-mt1` 六个集群全部返回：
 
-文件：`lib/core/platform/native_http.dart`
+`4001 App key ... not in this cluster`
 
-- 文档注释改为 Windows/Android 双平台。
-- `NativeHttp.supportsKick => Platform.isWindows || Platform.isAndroid`。
-- `getKickJson` 参数和 MethodChannel 名称不变：`pure_live/native_http`、`getKickJson`、`{url, headers, proxyHost?, proxyPort?, timeoutMillis?}`。
+即旧 Pusher 应用 key 已失效，订阅从未成功。不要再把 4001 当作房间号、网络、代理或 UI 问题，也不要恢复该 key。
 
-文件：`lib/domains/live/data/platforms/sites.dart`
+### 3.2 当前有效链路
 
-- `supportedSiteIds`：Windows 或 Android 时加入 `kickSite`。
-- `availableSites` 列表：同样按 Windows 或 Android 加入 Kick。
-- 退役注释更新为“Windows/Android 原生 TLS 通道通过 Cloudflare 检查；其他平台继续退役”。
-- `retiredSiteIds` 仍保留 `'kick'`，用于非 Windows/Android 的退役提示。
+1. `GET https://kick.com/api/v2/channels/<slug>` 取独立 `chatroom.id`。频道 ID、用户 ID 和 chatroom ID 可以不同，不能猜测。
+2. `POST https://web.kick.com/api/v1/realtime/channels/<chatroomId>/chat/connection`，body：
+   `{"client":{"id":"<uuid>","type":"web"},"capabilities":{"accepted_providers":[{"provider":"pusher"},{"provider":"centrifugo"}]}}`
+   从 `data.connections[]` 中选择 `provider=centrifugo`，读取 `credentials.url`。
+3. `POST https://web.kick.com/api/v1/realtime/auth/connection`，body `{"client_id":"<uuid>"}`，读取 `data.token`（游客 JWT）。
+4. WebSocket 发送 `{"connect":{"token":"<jwt>","name":"js"},"id":1}`；收到 `{"id":1,"connect":{...}}` 后发送 `{"subscribe":{"channel":"chatrooms.<id>.v2","flag":1},"id":2}`；收到 `{"id":2,"subscribe":{}}` 才认为订阅成功。
+5. 消息形状：`{"push":{"channel":"chatrooms.<id>.v2","pub":{"data":{"event":"App\\Events\\ChatMessageEvent","data":"<json string>"}}}}`。
+6. Centrifugo keepalive 是空 JSON `{}`，收到后回复 `{}`；不要发送 Pusher 的 `pusher:ping`。
 
-文件：`lib/domains/live/data/favorite_room_controller.dart`
+`kick.com` 对 dart:io 仍返回 403，频道 JSON 继续走既有 Windows WinHTTP / Android HttpURLConnection 原生 TLS 通道。`web.kick.com` 和 `realtime.*.platform.kick.com` 在本机 dart:io/dio 可直连，本轮没有扩大原生 TLS 主机白名单。
 
-- 仅注释更新：v17 为 Windows/Android 恢复；v39 为 Kick 在 Windows/Android 返回。
-- `currentSiteCatalogMigration = 39` 未改变，已有用户不需要新迁移。
+## 4. 本批源码改动
 
-文件：`lib/shared/platforms/kick/kick_api.dart`
+### 4.1 `lib/shared/platforms/kick/kick_api.dart`
 
-- 仅注释更新：Windows WinHTTP 和 Android HttpURLConnection 均被接受，两者都拒绝其他主机。
-- `usesPlatformTls(uri, {native})` 逻辑未改变：只有 `native == true` 且 `https://kick.com` 才走原生通道。
-- `_nativeRequest` 仍复用超时、代理、8 MB 上限和取消语义。
-- IVS 媒体 `*.live-video.net` 继续走 dio，不要接入只放行 `kick.com` 的原生通道。
+新增：
 
-### 3.3 测试
+- `typedef KickPostRequest` 和构造参数 `post`，测试可注入 POST。
+- `realtimeOrigin = 'https://web.kick.com'`、`realtimeBase = '$realtimeOrigin/api/v1/realtime'`、`realtimeResponseLimit = 256 * 1024`、`realtimeHeaders`。
+- `chatConnection({chatroomId, clientId, cancel})`：校验正整数 chatroom ID 和 UUID；POST 连接申请；只选择 `centrifugo` provider；交给 `_realtimeSocket` 校验。
+- `chatToken({clientId, cancel})`：校验 UUID；POST 游客 JWT；交给 `_validGuestToken` 校验。
+- `_defaultPost`：走 `HttpClient.instance.dio`，支持代理、取消和 20 秒超时，流式读取并限制 256 KiB。
+- `_postJson`、`_failure`、`_realtimeSocket`、`_validGuestToken`。
 
-文件：`test/shared/platforms/kick_transport_routing_test.dart`
+安全约束：
 
-- 移除 `dart:io` 导入，改用 `NativeHttp.supportsKick`。
-- 测试名改为 “Kick is registered only where a native TLS channel exists”。
-- 断言 `Sites.isSupported/isRetired/isRetiredLink` 与 `NativeHttp.supportsKick` 一致；支持时检查 Kick logo。
+- WebSocket 只接受 `wss://realtime.<region>.platform.kick.com/connection/websocket`。
+- 必须无 userInfo、无 query、无 fragment，端口为 443 或缺省。
+- UUID 必须符合标准 8-4-4-4-12 小写十六进制格式。
+- JWT 必须是三段 `eyJ...` 形状，长度不超过 4096。
+- 不恢复旧 Pusher key、不扩展原生 TLS 白名单、不猜测 chatroom ID。
 
-文件：`integration_test/native_http_kick_test.dart`
+既有 `chatroomId()` 保留；频道请求仍通过 `kick.com` 原生 TLS。
 
-- 头部注释补充 Android 设备运行方式：
-  `flutter test integration_test/native_http_kick_test.dart --device-id=emulator-5554`
-- 测试体未改变；本批没有在 Android 设备上运行它。
+### 4.2 `lib/shared/platforms/kick/kick_danmaku.dart`
 
-### 3.4 文档
+- 重写为 Centrifugo 引擎，保留 `LiveDanmaku` 生命周期和 `WebScoketUtils` 的有限重连、心跳超时、单一 socket 所有权。
+- 每个会话生成 UUIDv4 游客客户端 ID；连接前获取 JWT；重连时 `_handshake` 重新获取 JWT。
+- `connect` 成功后按 `subscribe` 回复；只有订阅成功才 `markConnected()` 并触发 `onReady`。
+- 空 JSON `{}` 作为 keepalive，回复 `{}`。
+- `parseFrame` 支持 `connect`、`subscribe`、错误帧、`push.disconnect`、当前和旧版聊天消息形状。
+- 只转发目标 `chatrooms.<id>.v2` 的消息；`App\Events\ChatMessageEvent` 和 `App\Events\ChatMessageSentEvent` 均接受。
+- 保留消息 ID、用户名、颜色、发送时间；`[emote:<id>:<name>]` 转为表情名称。
+- `_generation` 防止旧会话在 stop/reconnect 后回写；`_subscriptionTimer` 在 10 秒内未订阅成功时触发重连。
 
-- `docs/PLATFORM_COMPATIBILITY.md`：Kick 从“仅 Windows”改为“Windows/Android”；平台数量改为 Windows 与 Android 各 34 直播站 + IPTV；表格标签改为 `Kick（Windows/Android）`。
-- `docs/KICK_WINDOWS_RESTORE_2026_11_18.md`：用户结果说明，已更新为本批交付。
-- 本文件：AI 技术交接，已更新为本批交付。
-- 历史证据仍在 `docs/PLATFORM_PROBE_2026_09_25.md`：Android `HttpURLConnection` 旧实现（`f1511974`、`76a59f31`、`8435e9e2`）曾在真机通过 1080p60 播放与聊天；这是历史记录，不是本批验收。
+### 4.3 测试与探针
 
-## 4. 构建与安装包事实
+- `test/shared/platforms/kick_danmaku_test.dart`：
+  - chatroom 解析与身份不匹配拒绝。
+  - 连接地址选择、非法 provider/URL/端口/query/path 拒绝。
+  - JWT 格式校验。
+  - 完整 `connect` → `subscribe` → 消息 → 关闭。
+  - 旧消息形状、错误帧、空对象心跳、emote 文本。
+- `tool/probes/kick_chat_probe_test.dart`：
+  - 可选真实网络探针，不在普通 `test/` 目录，不会被常规测试自动执行。
+  - 用 curl 获取频道 JSON（规避本机测试环境对 `kick.com` 的 TLS 限制），注入 request，仅替换测试 dio 适配器，真实调用生产 `KickApi` + `KickDanmaku`。
+  - 默认频道 `xqc`，可用 `PURELIVE_KICK_SLUG` 覆盖；只输出聚合计数。
+  - 本轮输出 `00:08 +1: All tests passed!`，收到真实聊天消息。
 
-### 4.1 Windows
-
-- 命令：`tool/build_local_release.ps1 -Target WindowsX64 -Configuration Release -SkipQuality`
-- 构建记录：`D:\purelive\local-artifacts\build-records\20261118T010059642Z-build-windowsx64-release.json`
-- 安装程序：`D:\purelive\local-artifacts\3.1.19-4108\PureLive-3.1.19-4108-windows-x64-setup.exe`
-  - 63,019,623 字节
-  - SHA-256 `dfac41982cf3045d7f720df744b60ee4ef472fecff174a9e1ff0fcbbcb7bafba`
-  - Authenticode `NotSigned`
-  - ProductVersion `3.1.19`
-- 便携包：`D:\purelive\local-artifacts\3.1.19-4108\PureLive-3.1.19-4108-windows-x64-portable.zip`
-  - 80,987,877 字节
-  - SHA-256 `c60a666606d1b5c624fb63207b640b58e1fffff50ef3b5f3e647a4783698c4bc`
-- 构建脚本已完成：锁文件依赖解析、FFmpeg 9.0.2 Windows ZIP 哈希核验、install manifest 过滤、便携 ZIP、Inno Setup 安装程序。
-- 构建元数据：`WINDOWS_BUILD_METADATA.json` 和 `WINDOWS_SHA256SUMS.txt` 在同目录。
-- `source_commit` 为 `d7d9c3e8d`；`tracked_files_dirty=true` 仅因构建期间存在 `docs/PLATFORM_COMPATIBILITY.md` 文档修改，`docs/` 不参与应用打包。
-
-### 4.2 Android
-
-- 命令：`tool/build_local_release.ps1 -Target AndroidArm64 -Configuration Release -SkipQuality`
-- 构建记录：`D:\purelive\local-artifacts\build-records\20261118T011120975Z-build-androidarm64-release.json`
-- APK：`D:\purelive\local-artifacts\3.1.19-4108\PureLive-3.1.19-4108-debug-signed-android-arm64-v8a-release.apk`
-  - 139,036,861 字节
-  - SHA-256 `0e207bb2eb15f4845fe084d196909a947933d666dd21a169849a1fe492ba25a9`
-  - 包名 `com.mystyle.purelive`
-  - versionName `3.1.19`；pubspec 基础 build `4108`；Manifest versionCode `6108`（`--split-per-abi` 的 arm64 偏移 +2000）
-  - minSdk 26，targetSdk 37，ABI `arm64-v8a`
-  - 18 个原生库，ELF LOAD 对齐 ≥ `0x4000`
-  - 关键库：`libmpv.so`、`libffmpegkit.so`、`libflutter.so`、`libapp.so`
-  - 签名：V2，证书 `CN=Android Debug`，证书 SHA-256 `4c1b62ecc97b05f78f513889995348c5e35e7bbff78a76727c33caa584208a93`
-- 构建脚本已完成：FFmpeg 9.0.2 AAR 哈希核验、APK 包名/版本/ABI/原生库/ELF 对齐/大小/SHA-256 核验。
-- `BUILD_METADATA.json` 和 `SHA256SUMS.txt` 在同目录。
-- 这是 Release 模式但使用 Debug 证书的测试包，不是正式签名发布包。覆盖正式签名安装前必须先卸载。
-
-## 5. 实际验证记录
+## 5. 验证记录
 
 环境：Windows 10.0.26200，Flutter 3.47.5（`.fvmrc`），`tool/flutterw.ps1`。
 
-1. **定向测试 + Analyze**
-   - 测试命令：`tool/local_ci.ps1 -Scope Focused -SkipPubGet -TestPath <10 个文件>`；测试文件：`kick_transport_routing_test.dart`、`kick_danmaku_test.dart`、`playback_header_resolver_test.dart`、全部 `mirror_danmaku_*`（7 个测试文件）。
-   - 结果：62/62 通过；测试阶段 54.8 秒；记录 `local-artifacts/build-records/20261118T011408781Z-quality-focused.json`（`source_commit` 为 `d7d9c3e8d`）。
-   - Analyze 命令：`tool/local_ci.ps1 -Scope Focused -Analyze -SkipPubGet`；结果 `No issues found!`（151.2 秒）；记录 `local-artifacts/build-records/20261118T011650353Z-quality-focused.json`。
-   - 两轮运行的 `source_worktree_dirty` 均为 `true`，原因是文档修改；业务源码为 `d7d9c3e8d`。
-2. **Android 原生 TLS 接口探针（本机运行）**
-   - 独立 `HttpURLConnection` 探针，用 javac 21 + d8 编译，通过 `app_process` 在 MuMu Android 15/API 35 x86_64 上运行。
-   - 请求 `https://kick.com/stream/livestreams/en?page=1&limit=5`，HTTP 200，13,326 字节。
-   - 这是接口级证据，不覆盖应用内页面、播放器或弹幕。
-3. **Android x86_64 Debug 构建与启动**
-   - `build/app/outputs/flutter-apk/app-debug.apk` 曾安装到 MuMu 模拟器并启动，logcat 出现 Flutter “Fully drawn”。
-   - 未进入 Kick 页面做 UI 验收；MuMu 多虚拟显示导致 `adb screencap` 不可用。
-4. **Android arm64 Release 构建（第一次失败）**
-   - 失败在 `:app:compileReleaseJavaWithJavac`：`GeneratedPluginRegistrant.java` 引用 `dev.flutter.plugins.integration_test.IntegrationTestPlugin`，release classpath 中不存在。
-   - 根因：该文件是 gitignored 生成文件，时间戳来自之前的 Debug/集成测试构建；构建脚本使用 `--no-pub`，Flutter 不会重新生成平台插件文件，于是沿用了含 dev 依赖的旧注册表。
-   - 修复：运行一次不带 `--no-pub` 的 release config-only，重新生成插件注册表；确认文件时间戳更新且不再引用 `integration_test`，再重跑构建脚本。
-   - 临时脚本：`.lcode/android_release_config_only.ps1`（未提交）。
-5. **Android arm64 Release 构建（第二次成功）**
-   - Gradle `assembleRelease` 141.1 秒；APK 132.6 MB（十进制显示），最终文件 139,036,861 字节。
-   - 脚本输出：`Android ELF alignment passed: ABI=arm64-v8a, libraries=18, minimum LOAD alignment >= 0x4000`；`Android APK integrity passed: ... version=3.1.19, manifestVersionCode=6108, minSdk=26, Flutter assets=1306, asset bytes=24669364`。
-   - `apksigner verify --verbose --print-certs`：`Verifies`，V2 true，V1/V3/V4 false，签名者 `CN=Android Debug`。
-   - `unzip -l` 确认关键库存在；`classes.dex` 含 `getKickJson`、`postTwitchJson`、`pure_live/native_http`、`kick.com`；`libapp.so` 含 `getKickJson`、`kick.com`。
-6. **Windows Release 构建**
-   - 成功；构建记录和产物见 §4.1。
-   - 安装程序未安装运行；只核验了产物元数据和签名状态。
-7. **未执行**
-   - Android 真机/模拟器应用内 Kick 目录、搜索、房间、播放、清晰度、弹幕、同步弹幕。
-   - Pusher 真实连接。
-   - Windows 安装程序安装启动。
-   - 完整回归门禁（本批使用 `-SkipQuality`，引用此前定向测试与 Analyze 证据）。
-   - 架构严格校验（历史基线有一条既有违规，本批未改该文件）。
+### 5.1 本轮在干净提交上执行
 
-## 6. 已知缺陷 / 风险
+- Analyze：
+  `powershell -NoProfile -ExecutionPolicy Bypass -File tool/local_ci.ps1 -Scope Focused -Analyze -SkipPubGet`
+  结果 `No issues found!`，Analyze 14.6 秒；记录
+  `local-artifacts/build-records/20261118T113834952Z-quality-focused.json`，`source_commit=302e44c92`。
+  记录中的 `source_worktree_dirty=true` 仅因未跟踪 `.lcode/`；跟踪文件干净，Windows 构建元数据也记录 `tracked_files_dirty=false`。
+- 完整测试：
+  `flutter test --no-pub --concurrency=12`（在 `tool/build_resource_guard.ps1` 的重型任务租约内）
+  结果 **298/298 通过**，约 31 秒；日志
+  `local-artifacts/build-records/20261118T113834952Z-kick-full-tests.log`。
+- 旧的 Full 包装器尝试：
+  `tool/local_ci.ps1 -Scope Full` 在 `repository_preflight` 失败：
+  `Build policy file is missing: .github\workflows\audit-upstream.yml`
+  记录 `local-artifacts/build-records/20261118T112542552Z-quality-full.json`。
+  这是既有仓库策略漂移，不是本批 Kick 代码失败。不要把直接运行的 Analyze/测试说成 Full 包装器通过。
 
-- **构建脚本的插件注册表陷阱**：在 Debug/`integration_test` 构建之后直接跑 `-Target AndroidArm64 -Configuration Release -SkipQuality`，可能因旧 `GeneratedPluginRegistrant.java` 含 `integration_test` 而失败。处理方式见 §5.4；不要手工编辑该生成文件。
-- **Kotlin 增量缓存跨盘警告**：首次失败构建出现 `this and base files have different roots`（Pub 缓存在 `C:`，仓库在 `D:`）的 Kotlin 增量缓存错误；第二次构建未再导致失败。若后续干净构建复现，可考虑禁用 Kotlin 增量编译或统一盘符，但不要未经授权修改构建配置。
-- **Android 签名**：本机没有 `android/key.properties`，Release 包使用 Debug 证书；不能作为正式发布包。
-- **Windows 签名**：安装程序未签名，SmartScreen 可能拦截。
-- **Cloudflare 依赖**：Android `HttpURLConnection` 和 Windows Schannel 目前被接受，未来可能再次被拦截。
-- **真实行为未验收**：目录、搜索、播放、清晰度、弹幕、聊天、收藏迁移、长时间稳定性均未在本批真实设备 UI 中验证。
-- **版本/发布未推进**：仍是 `3.1.19+4108`；没有 tag、Release、正式签名、上传或发布索引。
-- **文档构建标记**：两套构建的 `tracked_files_dirty=true` 由仅文档修改导致；应用源码基线是 `d7d9c3e8d`。
+### 5.2 Windows Release 构建
+
+命令：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tool/build_local_release.ps1 `
+  -Target WindowsX64 -Configuration Release -SkipQuality
+```
+
+- 构建记录：`local-artifacts/build-records/20261118T113703179Z-build-windowsx64-release.json`
+  - `status=succeeded`，`duration_seconds=308.703`
+  - `source_commit=302e44c92...`
+  - `quality=external-focused-or-existing-evidence`
+- 安装程序：`D:\purelive\local-artifacts\3.1.19-4108\PureLive-3.1.19-4108-windows-x64-setup.exe`
+  - 63,026,122 字节
+  - SHA-256 `1c3396d09d650a1e35cb2aaa53de315394a82786d5771d56476733b8d516f962`
+  - Authenticode `NotSigned`，ProductVersion `3.1.19`
+- 便携包：`D:\purelive\local-artifacts\3.1.19-4108\PureLive-3.1.19-4108-windows-x64-portable.zip`
+  - 80,992,861 字节
+  - SHA-256 `078cd3d2a22d8d51f506a0b0607ced96aff85599faedc7b3eba252d26f493ca8`
+- 元数据：`WINDOWS_BUILD_METADATA.json` 记录 `source_commit=302e44c92...`、`tracked_files_dirty=false`。
+- 便携包含 `msvcp140.dll`、`vcruntime140.dll`、`vcruntime140_1.dll`。
+- 从便携包解出的 `data/app.so` 与 `build/windows/x64/runner/Release/data/app.so` 哈希一致：
+  `069681adf530a9fecf7f97c181259cad1d28bb26ddfb222b689139eda5c846ed`
+  且包含 `web.kick.com`、`chatrooms.`、`App\Events\ChatMessageEvent`，确认构建的是新代码。
+- 构建使用 `-SkipQuality` 的原因：Full 包装器被上述既有缺失工作流阻断；但本提交已在干净工作树上直接完成 Analyze 和 298 个测试。构建脚本自身完成 FFmpeg/Firebase 缓存核验、Windows 运行库白名单、便携 ZIP、Inno Setup 和哈希/元数据生成。
+
+### 5.3 明确未执行
+
+- Windows 安装程序安装、启动、Kick 房间播放、弹幕呈现、长时间运行。
+- Android APK 重建或真机/模拟器验收；同目录的 Android APK 是修复前产物，不含 Centrifugo 修复。
+- GitHub Release、附件上传、正式签名、`assets/releases.json` 刷新。
+- 播放卡顿调查（用户明确暂缓）。
+
+## 6. 已知缺陷 / 风险 / 阻断
+
+- **Full 质量包装器阻断**：`tool/validate_build_policy.ps1` 仍要求已被 `4a0cf09fe` 删除的 `.github/workflows/audit-upstream.yml`，还引用了同样被删除的 `sign-staged-android.yml`、`feature-build.yml`、`local-signed-android.yml`、`publish-staged-release.yml` 等。不要为了通过门禁盲目恢复这些工作流，也不要修改业务源码去迎合旧策略。
+- **插件路径校验漂移**：同一校验器仍按旧的 `plugins/flv_lzc/android/...` 路径检查 16 KB fplayer AAR，而当前 `flv_lzc` 是 Git 依赖（`pubspec.lock` 锁定 `162030d6...`），实际路径在 Pub cache，应用 `android/build.gradle.kts` 使用 `rootProject.project(":flv_lzc").projectDir.resolve("libs")`。如果未来修复该验证器，应按 `.dart_tool/package_config.json` 解析当前 Git 插件根目录并继续核验同一 AAR 哈希 `3643B36B...`；不要恢复 4 KB 公共 AAR，不要放宽为无条件通过。
+- **Windows 界面未验收**：构建成功、包内代码正确不等于真实播放页弹幕已显示；必须由用户安装后确认。
+- **安装包未签名**：SmartScreen 可能拦截。
+- **版本未递增**：`3.1.19+4108`；不是新版本发布。
+- **旧 Android APK 陷阱**：`local-artifacts/3.1.19-4108/` 下的 Android APK 构建于本次修复之前，不能当作包含 Centrifugo 的 Android 包。
+- **真实网络依赖**：`web.kick.com` 和 realtime 主机当前直连可用；未来协议或主机可能再次变化。探针是可选网络测试，不应加入常规 CI 的必经路径。
+- **未覆盖风险**：长时间 token 过期、网络切换、服务端主动断开、后台恢复和代理组合未做真实环境长跑；只有单元测试分支覆盖。
 
 ## 7. 剩余任务与建议顺序
 
-1. **用户自行安装验证 Android**：先卸载正式签名旧版（如存在），安装 arm64 APK；验证启动、Kick 目录、搜索、房间详情、播放、清晰度、弹幕、同步弹幕、收藏迁移和退出重进。
-2. **用户自行安装验证 Windows**：运行 setup.exe，验证 Kick 目录、搜索、播放、清晰度、弹幕、外部打开和收藏；注意 SmartScreen。
-3. 如果两平台验收通过，再按 `BUILD_POLICY.md` 的正式交付闭环处理：版本递增、完整回归、正式签名、tag/草稿 Release、上传、签名校验、`assets/releases.json` 刷新。
-4. 正式交付前重新确认 `assets/version.json`、`pubspec.yaml`、MSIX 版本、README/Release Notes 和阶段文档的版本同步。
-5. 如果后续还要构建 Android Release，先检查 `android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java` 是否引用 `integration_test`；若是，先重新生成 release 插件注册表。
-6. 评估 Android 集成测试在真实设备上的运行；本批没有运行。
-7. 不要删除 `.lcode/` 前先确认其中的历史草稿是否还需要对照；不要提交该目录。
+1. **用户验收 Windows**：运行 setup.exe 或解压便携包，进入 Kick 直播间，确认弹幕能出现、能滚动、颜色和 emote 文本正常；同时观察长时间连接。
+2. 如果 Windows 验收通过且用户仍要 Android：重新构建 Android arm64 Release（共享 `KickDanmaku` 已包含修复），再做真机验收；旧 APK 不要复用。
+3. 如果要做正式交付：先决定是否修复 Full 包装器阻断；在干净收敛提交上完成完整门禁，再按 `BUILD_POLICY.md` 做版本递增、签名、tag/Release、附件和索引更新。
+4. 只有在用户重新提出时才恢复 Kick 播放卡顿调查；不要因为修复了弹幕就顺手改播放器。
+5. 文档提交后核对 `git log`，把最终文档提交哈希补入交付说明；不要改写已推送的源码提交。
 
 ## 8. 操作权限与禁止事项
 
-- 当前授权范围：提交/推送本批源码，构建 Windows 与 Android 本机安装包，更新交付文档。
-- 设备/ADB/真机验证由用户自行执行；不要主动继续设备操作。
-- 不要创建 GitHub Release、上传附件、更新 `assets/releases.json` 或递增版本，除非用户明确要求。
-- 不要强推、改写远端历史、删除无关分支或覆盖用户数据。
-- 不要提交 `.lcode/`、`android/key.properties`、签名文件、密钥或未脱敏日志。
-- 不要把 Debug 证书签名的 APK 描述为正式发布包。
-- 不要在没有新证据时声称 Android UI、播放、弹幕、Pusher 或 Windows 安装运行已验收。
-- 不要用“重试/刷新/延迟”替代对失败原因的诊断。
+- 当前授权范围：提交/推送本批源码，构建 Windows 本机安装包，更新交付文档。
+- 不得在无当前设备请求时做 ADB、真机、模拟器或 Windows GUI 操作。
+- 不得创建 GitHub Release、上传附件、更新发布索引或递增版本，除非用户明确要求。
+- 不得强推、改写远端历史、删除无关分支或覆盖用户数据。
+- 不得提交 `.lcode/`、`android/key.properties`、签名文件、密钥或未脱敏日志。
+- 不得把未签名的 setup.exe 说成正式发布包。
+- 不得把“构建成功”或“单元测试通过”说成 Windows 界面弹幕验收通过。
+- 不得恢复已失效的 Pusher key、已删除的发布工作流或 4 KB fplayer AAR 来绕过门禁。
+- 不得用“重试/刷新/延迟”替代对失败原因的诊断。
 
 ## 9. 关键命令
 
 ```powershell
-# 定向测试 + Analyze（按实际需要替换 TestPath 数组）
+# 干净提交上的 Analyze
 powershell -NoProfile -ExecutionPolicy Bypass -File tool/local_ci.ps1 `
-  -Scope Focused -SkipPubGet `
-  -TestPath test/shared/platforms/kick_transport_routing_test.dart,test/shared/platforms/kick_danmaku_test.dart,test/domains/live/playback_header_resolver_test.dart -Analyze
+  -Scope Focused -Analyze -SkipPubGet
 
-# 重新生成 Android Release 插件注册表（在 Debug/集成测试构建之后）
-powershell -NoProfile -ExecutionPolicy Bypass -File tool/flutterw.ps1 build apk `
-  --release --config-only --split-per-abi --target-platform android-arm64 `
-  --build-name=3.1.19 --build-number=4108
+# 完整测试（资源守卫内；不要与构建并行）
+. .\tool\build_resource_guard.ps1
+$lease = Enter-PureLiveHeavyTaskSlot -TaskName "Kick full test suite"
+try {
+  .\tool\flutterw.ps1 test --no-pub --concurrency=12
+} finally {
+  Exit-PureLiveHeavyTaskSlot -Lease $lease
+}
 
-# Android arm64 Release（本机测试签名）
-powershell -NoProfile -ExecutionPolicy Bypass -File tool/build_local_release.ps1 `
-  -Target AndroidArm64 -Configuration Release -SkipQuality
+# 真实网络生产链路探针（可选，需要 curl 和可用的 Kick 频道）
+.\tool\flutterw.ps1 test tool/probes/kick_chat_probe_test.dart
 
-# Windows x64 Release
+# Windows x64 Release（本轮实际命令）
 powershell -NoProfile -ExecutionPolicy Bypass -File tool/build_local_release.ps1 `
   -Target WindowsX64 -Configuration Release -SkipQuality
 ```
@@ -230,5 +224,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tool/build_local_release.ps1
 
 - 用户结果说明：[KICK_WINDOWS_RESTORE_2026_11_18.md](KICK_WINDOWS_RESTORE_2026_11_18.md)
 - 平台兼容性：[PLATFORM_COMPATIBILITY.md](PLATFORM_COMPATIBILITY.md)
-- 历史平台探针（Android Kick 旧实现与真机证据）：[PLATFORM_PROBE_2026_09_25.md](PLATFORM_PROBE_2026_09_25.md)
-- 历史聊天审计：[KICK_PUBLIC_CHAT_AUDIT_2026_09_23.md](KICK_PUBLIC_CHAT_AUDIT_2026_09_23.md)
+- 旧 Pusher 审计（已被本次 Centrifugo 迁移取代，仅保留历史证据）：[KICK_PUBLIC_CHAT_AUDIT_2026_09_23.md](KICK_PUBLIC_CHAT_AUDIT_2026_09_23.md)
+- 历史平台探针：[PLATFORM_PROBE_2026_09_25.md](PLATFORM_PROBE_2026_09_25.md)

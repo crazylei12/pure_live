@@ -1,5 +1,7 @@
 # Kick 公开聊天只读接入
 
+> **历史说明（2026-11-18）**：本文记录的 Pusher 通道已失效。旧 Pusher key `32cbd69e4b950bf97679` 在 `ws-us2`、`us3`、`eu`、`ap1`、`ap2`、`mt1` 等集群均返回 `4001 App key ... not in this cluster`。当前实现已迁移到 Kick 的 Centrifugo 实时网关；最新结果见 [KICK_WINDOWS_RESTORE_2026_11_18.md](KICK_WINDOWS_RESTORE_2026_11_18.md) 和 [KICK_WINDOWS_RESTORE_HANDOFF_2026_11_18.md](KICK_WINDOWS_RESTORE_HANDOFF_2026_11_18.md)。以下内容仅作为历史协议证据保留。
+
 当前 3.2.0 源码原先让 Kick 返回 `EmptyDanmaku`，播放页虽能打开房间却没有远端评论。本批把公开聊天接到普通播放页和多画面大格；不发送消息，不使用频道 ID 猜测聊天房间 ID。
 
 ## 合同与实现
