@@ -6,7 +6,7 @@
 
 Windows 上的 Kick 支持已恢复到源码和本机 Debug 构建：Kick 只在 Windows 注册，公开目录、搜索、房间详情、HLS 质量解析、媒体请求头和 Pusher 聊天传输均按当前架构重新接入；kick.com 的 JSON 请求走 Windows 原生 WinHTTP/Schannel 通道，媒体仍走普通 dart:io/dio。定向测试、全仓 Analyze 和 Windows Debug 构建均通过；真实播放器 UI 播放、真实 Pusher 连接和发布包尚未验收。
 
-本批源码已本地提交 `adf311fcf`（`feat(kick): restore Windows-only Kick support`），文档在该源码提交之后的文档提交中；**推送失败**：`origin`（`github.com/liuchuancong/pure_live.git`）返回 403，当前系统账号 `crazylei12` 无该仓库写权限。未使用强推，也未改写远端。
+本批源码提交 `adf311fcf`、文档提交及合并提交已推送到你的 fork `crazylei12/pure_live` 的 `master`。为了让 fork 快进，先合并了源仓库新增的 `d94078377`（仅改 `assets/releases.json`），合并提交为 `b8380eaf9`。原 `origin`（`github.com/liuchuancong/pure_live.git`）仍返回 403，未推送、未强推。
 
 ## 本次完成
 
@@ -39,8 +39,8 @@ Windows 上的 Kick 支持已恢复到源码和本机 Debug 构建：Kick 只在
 
 ## 当前状态与操作边界
 
-- 源码状态：本地 `master` 在 `521f3ae06` 之上有源码提交 `adf311fcf` 及其后的文档提交，工作区只剩未跟踪的 `.lcode/` 草稿目录。
-- 推送状态：未推送。需要具备 `liuchuancong/pure_live` 写权限的账号或修正远端权限后重试；不要强推。
+- 源码状态：本地 `master` 已包含源码提交 `adf311fcf` 和文档提交，并合入 `origin` 的 `d94078377`；工作区只剩未跟踪的 `.lcode/` 草稿目录。
+- 推送状态：已推送到 fork `crazylei12/pure_live` 的 `master`；原 `origin`（`liuchuancong/pure_live`）因 403 仍不可写。fork 推送不等于推送到原仓库，也不等于发布。
 - 仅 Windows 生效。Windows 之外的构建不应展示 Kick；已保存的 Kick 房间会按退役平台处理。
 - 该通道依赖 Cloudflare 当前接受 Windows Schannel 的 TLS 指纹，后续可能再次失效。
 

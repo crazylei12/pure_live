@@ -21,9 +21,9 @@
 - 本批源码提交：`adf311fcf` `feat(kick): restore Windows-only Kick support`，24 个文件，+1794/−8。
 - 本批文档提交紧随源码提交，提交信息为 `docs: 记录 Kick Windows 恢复结果与交接`；其自身哈希会随文档修订变化，以 `git log` 为准。
 - 上一源码基线：`521f3ae06`。
-- 远端：`origin` = `https://github.com/liuchuancong/pure_live.git`；`upstream` = `https://github.com/Jackiu1997/pure_live.git`。
-- **推送状态：失败，未推送。** `git push origin master` 返回 403：`Permission to liuchuancong/pure_live.git denied to crazylei12`。Git 工具最初还报告系统凭据被阻止；`gh auth status` 显示 `crazylei12` 已登录且有 `repo` scope，但没有目标仓库写权限。不要切换或猜测账号，不要强推。工作区提交保留在本地。
-- 两个提交都只在本地；需先解决远端权限再推送。
+- 远端：`origin` = `https://github.com/liuchuancong/pure_live.git`；`upstream` = `https://github.com/Jackiu1997/pure_live.git`；`fork` = `https://github.com/crazylei12/pure_live.git`（2026-11-18 从 `origin` fork 到 `crazylei12`，`master` 起点 `d94078377`）。
+- **推送状态：已推送至 `fork` 的 `master`。** 2026-11-18 推送 `d94078377..b8380eaf9`；`b8380eaf9` 是合并提交，用于合入 `origin/master` 上唯一的发布数据提交 `d94078377`（仅 `assets/releases.json`），使推送可快进；`adf311fcf` 和文档提交哈希未改写。
+- **原 `origin` 仍不可写。** `git push origin master` 返回 403：`Permission to liuchuancong/pure_live.git denied to crazylei12`；`gh auth status` 显示 `crazylei12` 已登录且有 `repo` scope，但没有目标仓库写权限。不要切换或猜测账号，不要强推。
 
 ## 3. 已改文件与关键接口
 
@@ -105,7 +105,7 @@
 
 ## 6. 已知缺陷 / 风险
 
-- **推送权限**：见 §2，源码和文档都只在本地。
+- **原仓库推送权限**：见 §2，本批已推送到 fork `crazylei12/pure_live`；原 `origin` 仍因 403 不可写。
 - **真实 UI 未验收**：未打开 Kick 房间、未播放、未切清晰度、未看弹幕；原生探针只覆盖通道和目录。
 - **Pusher 未实连**：订阅、聊天、重连只有单元测试；Cloudflare/Pusher 策略变化可能失效。
 - **非 Windows 行为未实跑**：注册表条件、退役提示、保存房间失败路径只有单元测试/静态约束。
@@ -115,7 +115,7 @@
 
 ## 7. 剩余任务与建议顺序
 
-1. 解决 `liuchuancong/pure_live` 的推送权限（使用有权限的账号或修正远端），推送 `adf311fcf` 和文档提交；推送前 `git fetch origin` 检查是否分叉，禁止强推。
+1. 仅在需要推送到原仓库时：解决 `liuchuancong/pure_live` 的写权限（使用有权限的账号或修正远端），推送前 `git fetch origin` 检查分叉，禁止强推；fork `crazylei12/pure_live` 已包含本批提交。
 2. 在真实 Windows UI 中打开一个正在直播的 Kick 房间，验证目录、搜索、房间详情、清晰度、媒体头、外部打开、收藏和重启后的迁移。
 3. 真实连接 Pusher，确认订阅成功、聊天延迟、ping/pong 和断线重连；记录实际频道和结果，不要只引用单测。
 4. 在非 Windows 构建上确认 Kick 不出现在平台选择、链接按退役处理、保存的 Kick 房间有可理解提示。
