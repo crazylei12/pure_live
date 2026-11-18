@@ -1,23 +1,23 @@
 {
-  "version": "3.1.19",
-  "build_number": 4108,
-  "version_num": 301184108,
+  "version": "3.1.20",
+  "build_number": 4109,
+  "version_num": 301204109,
   "android_abis": [
     "armeabi-v7a",
     "arm64-v8a",
     "x86_64"
   ],
-  "version_desc": "version: 3.1.19\n版本更新：\n- 修复部分bug",
+  "version_desc": "version: 3.1.20\n版本更新：\n- 修复 Kick 直播弹幕：迁移到 Kick 当前实时聊天协议，恢复公开弹幕接收。",
   "prerelease": false,
-  "download_url": "https://github.com/liuchuancong/pure_live/releases/tag/v3.1.19",
+  "download_url": "https://github.com/liuchuancong/pure_live/releases/tag/v3.1.20",
   "platforms": {
     "android": {
-      "version": "3.1.19",
-      "build_number": 4108,
-      "version_num": 301184108,
-      "version_desc": "version: 3.1.19\n版本更新：\n- 修复部分bug",
+      "version": "3.1.20",
+      "build_number": 4109,
+      "version_num": 301204109,
+      "version_desc": "version: 3.1.20\n版本更新：\n- 修复 Kick 直播弹幕：迁移到 Kick 当前实时聊天协议，恢复公开弹幕接收。",
       "prerelease": false,
-      "download_url": "https://github.com/liuchuancong/pure_live/releases/tag/v3.1.19",
+      "download_url": "https://github.com/liuchuancong/pure_live/releases/tag/v3.1.20",
       "android_abis": [
         "armeabi-v7a",
         "arm64-v8a",
