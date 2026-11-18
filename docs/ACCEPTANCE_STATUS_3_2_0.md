@@ -16,6 +16,8 @@
 | 平台范围 | 当前 **33 个直播站点 + IPTV，0 组未注册**，即源码共 34 个适配器（3.2.8 前为 45 站）。3.2.8 下线花椒、OPENREC、TTingLive、PopkonTV、GoodGame、VK Video Live、Dailymotion、Rumble、NimoTV、Shopee Live、淘宝直播，3.2.11 下线 Kick，并删除未注册的战旗、浪 Live 代码，依据见[平台兼容性](PLATFORM_COMPATIBILITY.md)开头说明；DLive、一直播与企鹅电竞已归档生命周期证据；已注册平台仍有能力与双端原生覆盖缺口 |
 | 编号总账 | 历史大组 20 PASS / 42 RUN / 0 NR；RUN 是待补证或部分完成，不等于 42 个当前 Bug |
 
+> 2026-11-18 更新：当前分支已在 Windows 与 Android 恢复 Kick，平台注册数量与能力以[平台兼容性](PLATFORM_COMPATIBILITY.md)和[本批结果说明](KICK_WINDOWS_RESTORE_2026_11_18.md)为准；本页其余内容仍是 3.2.0 的历史快照，未按本批重算。
+
 ## 编号统计
 
 | 范围 | 总大项 | PASS | RUN：部分完成 | NR：未执行 |
