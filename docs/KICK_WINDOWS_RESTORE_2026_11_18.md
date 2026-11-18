@@ -12,7 +12,7 @@ Windows x64 安装程序和便携包已从干净提交 `302e44c92` 构建成功�
 
 - 源码提交：`302e44c92` `fix(kick): 迁移公开弹幕到 Centrifugo 实时网关`，4 个文件，+514/−77。
 - 已推送到 `fork`（`https://github.com/crazylei12/pure_live.git`）的 `master`，远端 head 已核对为 `302e44c92ad7c7bf6a98d8374ce28f3d3e935d48`。
-- 本文档的更新作为后续 `docs:` 提交推送；应用源码基线仍是 `302e44c92`。
+- 本文档更新已推送；文档提交哈希以 `git log` 为准，应用源码基线仍是 `302e44c92`。
 - 没有版本递增：仍是 `3.1.19+4108`。没有创建 tag、GitHub Release、上传附件或更新 `assets/releases.json`。
 
 ## 已经具备 / 本次完成

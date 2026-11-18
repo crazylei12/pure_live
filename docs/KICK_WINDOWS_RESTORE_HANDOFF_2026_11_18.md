@@ -29,7 +29,7 @@
   - `origin` = `https://github.com/liuchuancong/pure_live.git`，历史记录显示无写权限（403）；本批没有推送它。
   - `upstream` = `https://github.com/Jackiu1997/pure_live.git`，只读。
 - **推送状态：源码提交已推送到 `fork/master`。** 远端 head 已核对为 `302e44c92ad7c7bf6a98d8374ce28f3d3e935d48`。
-- 文档更新将作为后续 `docs:` 提交推送；其哈希以 `git log` 为准。文档提交不改变应用源码基线。
+- 文档更新已推送；其哈希以 `git log` 为准。文档提交不改变应用源码基线。
 - 工作区只剩未跟踪的 `.lcode/`；不要提交、不要删除其中的历史草稿。
 - 没有版本 tag、GitHub Release、附件上传或 `assets/releases.json` 更新。
 
@@ -180,7 +180,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tool/build_local_release.ps1
 2. 如果 Windows 验收通过且用户仍要 Android：重新构建 Android arm64 Release（共享 `KickDanmaku` 已包含修复），再做真机验收；旧 APK 不要复用。
 3. 如果要做正式交付：先决定是否修复 Full 包装器阻断；在干净收敛提交上完成完整门禁，再按 `BUILD_POLICY.md` 做版本递增、签名、tag/Release、附件和索引更新。
 4. 只有在用户重新提出时才恢复 Kick 播放卡顿调查；不要因为修复了弹幕就顺手改播放器。
-5. 文档提交后核对 `git log`，把最终文档提交哈希补入交付说明；不要改写已推送的源码提交。
+5. 文档提交已推送；如需在交付说明中引用文档提交哈希，以 `git log` 为准；不要改写已推送的源码提交。
 
 ## 8. 操作权限与禁止事项
 
