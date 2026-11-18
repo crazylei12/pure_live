@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
+import 'dart:math';
 
 import 'package:pure_live/core/models/live_message.dart';
 import 'package:pure_live/core/network/web_socket_util.dart';
@@ -10,14 +11,18 @@ import 'package:pure_live/shared/platforms/kick/kick_link.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-typedef KickPusherFrame = ({bool subscribed, bool ping, bool error, LiveMessage? message});
+typedef KickChatFrame = ({bool connected, bool subscribed, bool ping, bool error, LiveMessage? message});
 
-/// Read-only public chatroom subscription. The channel's numeric ID is not
-/// its chatroom ID; the latter is resolved from the current channel response.
+/// Read-only public chatroom subscription over Kick's Centrifugo gateway.
+///
+/// The channel's numeric ID is not its chatroom ID; the latter is resolved from
+/// the current channel response. A guest client ID is minted per session and
+/// exchanged for a short-lived JWT before every WebSocket connect.
 class KickDanmaku extends LiveDanmaku {
-  KickDanmaku({KickApi? api, WebSocketConnector? connector})
+  KickDanmaku({KickApi? api, WebSocketConnector? connector, String Function()? clientId})
     : _api = api ?? KickApi(),
-      _connector = connector ?? _connectSocket {
+      _connector = connector ?? _connectSocket,
+      _newClientId = clientId ?? _uuidV4 {
     heartbeatTime = 30000;
   }
 
@@ -35,14 +40,25 @@ class KickDanmaku extends LiveDanmaku {
     customClient: customClient,
   );
 
-  static const endpoint =
-      'wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.4.0&flash=false';
+  static final Random _random = Random.secure();
+
+  static String _uuidV4() {
+    final bytes = List<int>.generate(16, (_) => _random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    final hex = bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-'
+        '${hex.substring(16, 20)}-${hex.substring(20)}';
+  }
 
   final KickApi _api;
   final WebSocketConnector _connector;
+  final String Function() _newClientId;
   WebScoketUtils? _socket;
   Timer? _subscriptionTimer;
   int _generation = 0;
+  int _requestId = 0;
+  String? _pendingToken;
 
   @override
   Future<void> start(dynamic args) async {
@@ -53,53 +69,65 @@ class KickDanmaku extends LiveDanmaku {
     _socket = null;
     _subscriptionTimer?.cancel();
     _subscriptionTimer = null;
+    _pendingToken = null;
     markDisconnected();
     await previous?.close();
     if (generation != _generation) return;
     final chatroomId = await _api.chatroomId(slug);
     if (generation != _generation) return;
+    final clientId = _newClientId();
+    final endpoint = await _api.chatConnection(chatroomId: chatroomId, clientId: clientId);
+    if (generation != _generation) return;
+    final token = await _api.chatToken(clientId: clientId);
+    if (generation != _generation) return;
+    _pendingToken = token;
     final socket = WebScoketUtils(
-      url: endpoint,
+      url: endpoint.toString(),
       heartBeatTime: heartbeatTime,
       connector: _connector,
       onReady: () {
-        if (generation != _generation) return;
-        markDisconnected();
-        _subscriptionTimer?.cancel();
-        _socket?.sendMessage(
-          jsonEncode({
-            'event': 'pusher:subscribe',
-            'data': {'auth': '', 'channel': 'chatrooms.$chatroomId.v2'},
-          }),
-        );
-        _subscriptionTimer = Timer(const Duration(seconds: 10), () {
-          if (generation == _generation && !isConnected) _socket?.reconnect();
-        });
+        final current = _socket;
+        if (current != null) unawaited(_handshake(current, generation, chatroomId, clientId));
       },
       onMessage: (raw) {
         if (generation != _generation) return;
         final frame = parseFrame(raw, chatroomId);
-        if (frame.ping) _socket?.sendMessage(jsonEncode({'event': 'pusher:pong', 'data': {}}));
+        if (frame.ping) {
+          _socket?.sendMessage('{}');
+          return;
+        }
         if (frame.error) {
           markDisconnected();
           _socket?.reconnect();
+          return;
+        }
+        if (frame.connected) {
+          _socket?.sendMessage(
+            jsonEncode({
+              'subscribe': {'channel': 'chatrooms.$chatroomId.v2', 'flag': 1},
+              'id': ++_requestId,
+            }),
+          );
+          return;
         }
         if (frame.subscribed) {
           _subscriptionTimer?.cancel();
           _subscriptionTimer = null;
           markConnected();
           onReady?.call();
+          return;
         }
         if (isConnected && frame.message != null) onMessage?.call(frame.message!);
       },
-      onHeartBeat: () => _socket?.sendMessage(jsonEncode({'event': 'pusher:ping', 'data': {}})),
       onReconnect: () {
         _subscriptionTimer?.cancel();
+        _subscriptionTimer = null;
         markDisconnected();
         onReconnect?.call('Kick chat reconnecting');
       },
       onClose: (message) {
         _subscriptionTimer?.cancel();
+        _subscriptionTimer = null;
         markDisconnected();
         onClose?.call('Kick chat connection failed: $message');
       },
@@ -108,11 +136,39 @@ class KickDanmaku extends LiveDanmaku {
     await socket.connect();
   }
 
+  Future<void> _handshake(WebScoketUtils socket, int generation, int chatroomId, String clientId) async {
+    markDisconnected();
+    _subscriptionTimer?.cancel();
+    _subscriptionTimer = null;
+    var token = _pendingToken;
+    _pendingToken = null;
+    if (token == null) {
+      try {
+        token = await _api.chatToken(clientId: clientId);
+      } catch (_) {
+        if (generation == _generation && identical(socket, _socket)) socket.reconnect();
+        return;
+      }
+    }
+    if (generation != _generation || !identical(socket, _socket)) return;
+    _requestId = 0;
+    socket.sendMessage(
+      jsonEncode({
+        'connect': {'token': token, 'name': 'js'},
+        'id': ++_requestId,
+      }),
+    );
+    _subscriptionTimer = Timer(const Duration(seconds: 10), () {
+      if (generation == _generation && !isConnected) socket.reconnect();
+    });
+  }
+
   @override
   Future<void> stop() async {
     ++_generation;
     _subscriptionTimer?.cancel();
     _subscriptionTimer = null;
+    _pendingToken = null;
     final socket = _socket;
     _socket = null;
     markDisconnected();
@@ -125,23 +181,36 @@ class KickDanmaku extends LiveDanmaku {
 
   static final _emoteCode = RegExp(r'\[emote:\d+:([^\]\s]+)\]');
 
-  static KickPusherFrame parseFrame(Object? raw, int chatroomId) {
-    const ignored = (subscribed: false, ping: false, error: false, message: null);
+  static KickChatFrame parseFrame(Object? raw, int chatroomId) {
+    const ignored = (connected: false, subscribed: false, ping: false, error: false, message: null);
     if (raw is! String || raw.length > 128 * 1024) return ignored;
+    final text = raw.trim();
+    // Centrifugo's keepalive ping/pong frames are an empty JSON object.
+    if (text == '{}') return (connected: false, subscribed: false, ping: true, error: false, message: null);
     try {
-      final envelope = _object(jsonDecode(raw));
+      final envelope = _object(jsonDecode(text));
       if (envelope == null) return ignored;
-      final event = envelope['event'];
-      if (event == 'pusher:ping') return (subscribed: false, ping: true, error: false, message: null);
-      if (event == 'pusher:error' || event == 'pusher_internal:subscription_error') {
-        return (subscribed: false, ping: false, error: true, message: null);
+      if (envelope['error'] != null) {
+        return (connected: false, subscribed: false, ping: false, error: true, message: null);
       }
-      if (envelope['channel'] != 'chatrooms.$chatroomId.v2') return ignored;
-      if (event == 'pusher_internal:subscription_succeeded') {
-        return (subscribed: true, ping: false, error: false, message: null);
+      if (envelope['connect'] != null) {
+        return (connected: true, subscribed: false, ping: false, error: false, message: null);
       }
-      if (event != r'App\Events\ChatMessageEvent' && event != r'App\Events\ChatMessageSentEvent') return ignored;
-      final data = envelope['data'];
+      if (envelope['subscribe'] != null) {
+        return (connected: false, subscribed: true, ping: false, error: false, message: null);
+      }
+      final push = _object(envelope['push']);
+      if (push == null) return ignored;
+      if (push['disconnect'] != null) {
+        return (connected: false, subscribed: false, ping: false, error: true, message: null);
+      }
+      if (push['channel'] != 'chatrooms.$chatroomId.v2') return ignored;
+      final event = _object(_object(push['pub'])?['data']);
+      if (event == null) return ignored;
+      if (event['event'] != r'App\Events\ChatMessageEvent' && event['event'] != r'App\Events\ChatMessageSentEvent') {
+        return ignored;
+      }
+      final data = event['data'];
       final payload = _object(data is String ? jsonDecode(data) : data);
       if (payload == null) return ignored;
       final legacy = _object(payload['message']);
@@ -168,6 +237,7 @@ class KickDanmaku extends LiveDanmaku {
           ? DateTime.tryParse(stamp)
           : null;
       return (
+        connected: false,
         subscribed: false,
         ping: false,
         error: false,

@@ -26,6 +26,11 @@ class KickException implements Exception, SiteTransportFailure {
 }
 
 typedef KickRequest = Future<({int status, String body})> Function(Uri uri, CancelToken? cancel);
+typedef KickPostRequest = Future<({int status, String body})> Function(
+  Uri uri,
+  Map<String, dynamic> body,
+  CancelToken? cancel,
+);
 
 class KickChannel {
   const KickChannel({
@@ -84,10 +89,18 @@ class KickDirectoryPage {
 }
 
 class KickApi {
-  KickApi({KickRequest? request}) : _request = request ?? _defaultRequest;
+  KickApi({KickRequest? request, KickPostRequest? post})
+    : _request = request ?? _defaultRequest,
+      _post = post ?? _defaultPost;
 
   static const origin = 'https://kick.com';
   static const responseLimit = 4 * 1024 * 1024;
+
+  /// Public chat moved from Pusher to Kick's Centrifugo gateway. These hosts
+  /// accept dart:io TLS, unlike kick.com itself.
+  static const realtimeOrigin = 'https://web.kick.com';
+  static const realtimeBase = '$realtimeOrigin/api/v1/realtime';
+  static const realtimeResponseLimit = 256 * 1024;
   static const userAgent =
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
       'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36';
@@ -98,6 +111,7 @@ class KickApi {
     'Origin': origin,
     'Referer': '$origin/',
   };
+  static const realtimeHeaders = {...headers, 'Content-Type': 'application/json', 'x-app-platform': 'web'};
 
   static Map<String, String> mediaHeaders(String slug) => {
     'User-Agent': userAgent,
@@ -106,6 +120,7 @@ class KickApi {
   };
 
   final KickRequest _request;
+  final KickPostRequest _post;
 
   static Future<({int status, String body})> _defaultRequest(Uri uri, CancelToken? cancel) =>
       usesPlatformTls(uri, native: NativeHttp.supportsKick) ? _nativeRequest(uri, cancel) : _dioRequest(uri, cancel);
@@ -161,7 +176,36 @@ class KickApi {
         return (status: 200, body: await readBody(body.stream));
       });
 
-  static Future<String> readBody(Stream<List<int>> stream, {Duration timeout = const Duration(seconds: 20)}) async {
+  /// The realtime gateway is not behind the Cloudflare TLS rule that covers
+  /// kick.com, so this stays on the app's dio client (proxy-aware).
+  static Future<({int status, String body})> _defaultPost(Uri uri, Map<String, dynamic> body, CancelToken? cancel) =>
+      withRequestCancellation(cancel, (transport) async {
+        final response = await HttpClient.instance.dio.post<ResponseBody>(
+          uri.toString(),
+          data: jsonEncode(body),
+          cancelToken: transport,
+          options: Options(
+            responseType: ResponseType.stream,
+            followRedirects: false,
+            headers: realtimeHeaders,
+            receiveTimeout: const Duration(seconds: 20),
+            validateStatus: (_) => true,
+          ),
+        );
+        final data = response.data;
+        if (data == null) throw const KickException(KickFailure.schema);
+        if (response.statusCode != 200) {
+          await data.stream.listen((_) {}).cancel();
+          return (status: response.statusCode ?? 0, body: '');
+        }
+        return (status: 200, body: await readBody(data.stream, limit: realtimeResponseLimit));
+      });
+
+  static Future<String> readBody(
+    Stream<List<int>> stream, {
+    Duration timeout = const Duration(seconds: 20),
+    int limit = responseLimit,
+  }) async {
     final iterator = StreamIterator(stream);
     final bytes = BytesBuilder(copy: false);
     final watch = Stopwatch()..start();
@@ -171,7 +215,7 @@ class KickApi {
         if (remaining <= Duration.zero) throw TimeoutException('Kick response deadline');
         if (!await iterator.moveNext().timeout(remaining)) break;
         final chunk = iterator.current;
-        if (bytes.length + chunk.length > responseLimit) throw const KickException(KickFailure.schema);
+        if (bytes.length + chunk.length > limit) throw const KickException(KickFailure.schema);
         bytes.add(chunk);
       }
       return utf8.decode(bytes.takeBytes());
@@ -182,6 +226,16 @@ class KickApi {
       await iterator.cancel();
     }
   }
+
+  static KickFailure? _failure(int status) => switch (status) {
+    200 => null,
+    400 => KickFailure.schema,
+    401 || 403 => KickFailure.access,
+    404 => KickFailure.missing,
+    429 => KickFailure.rateLimited,
+    >= 500 => KickFailure.service,
+    _ => KickFailure.transport,
+  };
 
   Future<String> _read(Uri uri, CancelToken? cancel) async {
     if (cancel?.isCancelled == true) throw const KickException(KickFailure.cancelled);
@@ -195,15 +249,7 @@ class KickApi {
       if (error is KickException) rethrow;
       throw const KickException(KickFailure.transport);
     }
-    final failure = switch (response.status) {
-      200 => null,
-      400 => KickFailure.schema,
-      401 || 403 => KickFailure.access,
-      404 => KickFailure.missing,
-      429 => KickFailure.rateLimited,
-      >= 500 => KickFailure.service,
-      _ => KickFailure.transport,
-    };
+    final failure = _failure(response.status);
     if (failure != null) throw KickException(failure);
     if (response.body.length > responseLimit) throw const KickException(KickFailure.schema);
     return response.body;
@@ -213,6 +259,28 @@ class KickApi {
     final body = await _read(Uri.parse('$origin$path').replace(queryParameters: query.isEmpty ? null : query), cancel);
     try {
       return _object(jsonDecode(body));
+    } on FormatException {
+      throw const KickException(KickFailure.schema);
+    }
+  }
+
+  Future<Map<String, dynamic>> _postJson(Uri uri, Map<String, dynamic> body, CancelToken? cancel) async {
+    if (cancel?.isCancelled == true) throw const KickException(KickFailure.cancelled);
+    late final ({int status, String body}) response;
+    try {
+      response = await _post(uri, body, cancel);
+    } catch (error) {
+      if (cancel?.isCancelled == true || (error is DioException && CancelToken.isCancel(error))) {
+        throw const KickException(KickFailure.cancelled);
+      }
+      if (error is KickException) rethrow;
+      throw const KickException(KickFailure.transport);
+    }
+    final failure = _failure(response.status);
+    if (failure != null) throw KickException(failure);
+    if (response.body.length > realtimeResponseLimit) throw const KickException(KickFailure.schema);
+    try {
+      return _object(jsonDecode(response.body));
     } on FormatException {
       throw const KickException(KickFailure.schema);
     }
@@ -272,6 +340,62 @@ class KickApi {
     final root = await _json('/api/v2/channels/$slug', const {}, cancel);
     if (KickLink.normalize(_text(root['slug'])) != slug) throw const KickException(KickFailure.identity);
     return _positiveInt(_object(root['chatroom'])['id']);
+  }
+
+  /// Resolves the regional Centrifugo WebSocket for the public chatroom.
+  Future<Uri> chatConnection({required int chatroomId, required String clientId, CancelToken? cancel}) async {
+    if (chatroomId <= 0 || !_clientId.hasMatch(clientId)) throw const KickException(KickFailure.identity);
+    final root = await _postJson(Uri.parse('$realtimeBase/channels/$chatroomId/chat/connection'), {
+      'client': {'id': clientId, 'type': 'web'},
+      'capabilities': {
+        'accepted_providers': [
+          {'provider': 'pusher'},
+          {'provider': 'centrifugo'},
+        ],
+      },
+    }, cancel);
+    final data = _object(root['data']);
+    for (final value in _list(data['connections'], max: 8)) {
+      final connection = _object(value);
+      if (connection['provider'] != 'centrifugo') continue;
+      return _realtimeSocket(_object(connection['credentials'])['url']);
+    }
+    throw const KickException(KickFailure.schema);
+  }
+
+  /// Issues the short-lived guest JWT used by the first `connect` frame.
+  Future<String> chatToken({required String clientId, CancelToken? cancel}) async {
+    if (!_clientId.hasMatch(clientId)) throw const KickException(KickFailure.identity);
+    final root = await _postJson(Uri.parse('$realtimeBase/auth/connection'), {'client_id': clientId}, cancel);
+    return _validGuestToken(_object(root['data'])['token']);
+  }
+
+  static final _clientId = RegExp(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
+  static final _guestTokenPattern = RegExp(r'^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$');
+  static final _realtimeHost = RegExp(r'^realtime\.[a-z0-9-]+\.platform\.kick\.com$');
+
+  static Uri _realtimeSocket(Object? value) {
+    if (value is! String || value.length > 2048) throw const KickException(KickFailure.schema);
+    final uri = Uri.tryParse(value);
+    final host = uri?.host.toLowerCase() ?? '';
+    if (uri == null ||
+        uri.scheme != 'wss' ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasFragment ||
+        uri.hasQuery ||
+        uri.path != '/connection/websocket' ||
+        (uri.hasPort && uri.port != 443) ||
+        !_realtimeHost.hasMatch(host)) {
+      throw const KickException(KickFailure.schema);
+    }
+    return uri;
+  }
+
+  static String _validGuestToken(Object? value) {
+    if (value is! String || value.length > 4096 || !_guestTokenPattern.hasMatch(value)) {
+      throw const KickException(KickFailure.schema);
+    }
+    return value;
   }
 
   static KickLive _live(Map<String, dynamic> data, {KickChannel? owner, Object? playbackUrl}) {
