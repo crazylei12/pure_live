@@ -71,7 +71,7 @@ class FavoriteRoomController extends GetxController {
     Sites.weiboSite, // v14
     Sites.showroomSite, // v15
     Sites.chzzkSite, // v16
-    'kick', // v17 (restored on Windows; keeps later versions aligned)
+    'kick', // v17 (restored on Windows/Android; keeps later versions aligned)
     Sites.seventeenLiveSite, // v18
     Sites.liveMeSite, // v19
     Sites.tiktokSite, // v20
@@ -93,7 +93,7 @@ class FavoriteRoomController extends GetxController {
     Sites.baiduLiveSite, // v36
     Sites.sixRoomSite, // v37
     Sites.lookLiveSite, // v38
-    Sites.kickSite, // v39 (Kick returns on Windows)
+    Sites.kickSite, // v39 (Kick returns on Windows/Android)
   ];
   static const int currentSiteCatalogMigration = 39;
 

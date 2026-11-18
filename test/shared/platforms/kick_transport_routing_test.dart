@@ -1,6 +1,5 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pure_live/core/platform/native_http.dart';
 import 'package:pure_live/domains/live/data/platforms/sites.dart';
 import 'package:pure_live/shared/platforms/kick/kick_api.dart';
 import 'package:pure_live/shared/platforms/kick/kick_link.dart';
@@ -39,11 +38,12 @@ void main() {
       expect(KickLink.parse('https://example.com/fixture'), isNull);
     });
 
-    test('Kick is registered and routable only on Windows', () {
-      expect(Sites.isSupported(Sites.kickSite), Platform.isWindows);
-      expect(Sites.isRetired(Sites.kickSite), !Platform.isWindows);
-      expect(Sites.isRetiredLink('来 https://kick.com/fixture'), !Platform.isWindows);
-      if (Platform.isWindows) {
+    test('Kick is registered only where a native TLS channel exists', () {
+      final supported = NativeHttp.supportsKick;
+      expect(Sites.isSupported(Sites.kickSite), supported);
+      expect(Sites.isRetired(Sites.kickSite), !supported);
+      expect(Sites.isRetiredLink('来 https://kick.com/fixture'), !supported);
+      if (supported) {
         expect(Sites.logoForId(Sites.kickSite), endsWith('/kick.png'));
       }
     });

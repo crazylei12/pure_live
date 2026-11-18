@@ -1,5 +1,6 @@
-// Runs inside the real Windows runner, where the pure_live/native_http
-// channel exists:  flutter test integration_test/native_http_kick_test.dart --device-id=windows
+// Runs inside a real runner that hosts the pure_live/native_http channel:
+//   flutter test integration_test/native_http_kick_test.dart --device-id=windows
+//   flutter test integration_test/native_http_kick_test.dart --device-id=emulator-5554
 // Use the long flag: through tool/flutterw.ps1, PowerShell binds `-d` to its own
 // -Debug switch, and flutter then installs, runs and UNINSTALLS the app on any
 // connected Android device instead.

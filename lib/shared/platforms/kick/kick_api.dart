@@ -118,7 +118,8 @@ class KickApi {
 
   /// Cloudflare answers every kick.com API request made with dart:io's TLS
   /// stack with 403, so the whole Kick catalog, search and rooms failed.
-  /// Windows WinHTTP (Schannel) is accepted; the runner refuses other hosts.
+  /// Windows WinHTTP (Schannel) and Android HttpURLConnection are accepted;
+  /// both native channels refuse other hosts.
   static Future<({int status, String body})> _nativeRequest(Uri uri, CancelToken? cancel) async {
     if (cancel?.isCancelled == true) throw const KickException(KickFailure.cancelled);
     ProxySettingsController? proxy;

@@ -2,19 +2,20 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
-/// Windows WinHTTP bridge for hosts that reject dart:io's TLS fingerprint.
+/// Native-TLS bridge for hosts that reject dart:io's TLS fingerprint.
 ///
-/// The Windows runner exposes `pure_live/native_http` and refuses every host
-/// except kick.com. Other platforms report [supportsKick] as false so the Kick
-/// adapter is not registered there.
+/// Windows (WinHTTP/Schannel) and Android (HttpURLConnection) expose
+/// `pure_live/native_http` and refuse every host except kick.com. Other
+/// platforms report [supportsKick] as false so the Kick adapter is not
+/// registered there.
 class NativeHttp {
   const NativeHttp._();
 
   static const MethodChannel _channel = MethodChannel('pure_live/native_http');
 
-  /// Kick is only exposed on Windows until another platform grows an accepted
-  /// native TLS transport.
-  static bool get supportsKick => Platform.isWindows;
+  /// Cloudflare accepts the Windows WinHTTP/Schannel and Android
+  /// HttpURLConnection TLS stacks; every other target keeps Kick retired.
+  static bool get supportsKick => Platform.isWindows || Platform.isAndroid;
 
   static Future<({int status, String body})> getKickJson({
     required String url,

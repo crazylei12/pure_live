@@ -155,9 +155,13 @@ class Sites {
     iptvSite,
   };
 
-  /// Kick's Cloudflare edge only accepts the Windows WinHTTP/Schannel TLS
-  /// fingerprint; keep the platform invisible on every other target.
-  static final Set<String> supportedSiteIds = {..._baseSupportedSiteIds, if (Platform.isWindows) kickSite};
+  /// Kick's Cloudflare edge only accepts the Windows WinHTTP/Schannel and
+  /// Android HttpURLConnection TLS fingerprints; keep the platform invisible on
+  /// every other target.
+  static final Set<String> supportedSiteIds = {
+    ..._baseSupportedSiteIds,
+    if (Platform.isWindows || Platform.isAndroid) kickSite,
+  };
 
   /// Root directory for all platform artwork.
   static const String _assetRoot = 'assets/images';
@@ -211,8 +215,8 @@ class Sites {
   static bool isSupported(String id) => supportedSiteIds.contains(id.trim().toLowerCase());
 
   /// Platforms removed in 3.2.8 (hard to maintain, niche or no longer usable)
-  /// and 3.2.11 (Kick). Kick is back in the registry on Windows, where the
-  /// WinHTTP/Schannel channel passes Cloudflare's TLS check; other targets keep
+  /// and 3.2.11 (Kick). Kick is back in the registry on Windows and Android,
+  /// where the native TLS channels pass Cloudflare's check; other targets keep
   /// treating it as retired. Saved follows, history and links stay readable
   /// instead of failing as unknown.
   static const Set<String> retiredSiteIds = {
@@ -458,7 +462,7 @@ class Sites {
       weiboSite,
       showroomSite,
       chzzkSite,
-      if (Platform.isWindows) kickSite,
+      if (Platform.isWindows || Platform.isAndroid) kickSite,
       liveMeSite,
       tiktokSite,
       youtubeSite,
