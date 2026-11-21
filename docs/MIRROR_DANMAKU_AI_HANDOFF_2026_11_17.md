@@ -55,10 +55,10 @@
 
 ## 2. 工作区与仓库基线
 
-> 以下是 2026-11-17 的单目标历史基线；2026-11-21 当前 `HEAD=b8128c0dd`，多目标已提交并推送到 `fork/master`，见第 0/9 节。下方的初版提交、403 和旧构建记录是历史证据，不代表当前状态。
+> 以下是 2026-11-17 的单目标历史基线；2026-11-21 应用源码提交为 `b8128c0dd`，交付文档提交为 `fbbc8cdb1`，多目标已推送到 `fork/master`，见第 0/9 节。下方的初版提交、403 和旧构建记录是历史证据，不代表当前状态。
 
 - 工作区：`D:\purelive`
-- 当前分支：`master`；功能提交 `b93d953eb`，版本提交 `b8128c0dd`；`fork/master` 与本地一致
+- 当前分支：`master`；功能提交 `b93d953eb`，版本提交 `b8128c0dd`，交付文档提交 `fbbc8cdb1`；`fork/master` 与本地一致
 - 两次本地提交：
   - `b93d953eb feat(danmaku): 支持同时同步多个直播间弹幕`
   - `b8128c0dd chore(release): 递增版本到 3.1.21+4110`
@@ -320,7 +320,7 @@ abstract interface class MirrorDanmakuHost {
 ## 9. 工作流状态与不可擅自恢复的限制
 
 - 当前是**多目标源码已提交、已推送、双平台 Release 已构建**的检查点；不是已发布、已安装或已验收。
-- 源码基线：`HEAD=b8128c0dd`；版本 `3.1.21+4110`；`fork/master` 已同步。
+- 源码基线：应用代码 `b8128c0dd`，交付文档 `fbbc8cdb1`；版本 `3.1.21+4110`；`fork/master` 已同步。
 - 已完成：7 个镜像测试文件共 58 个用例、应用级全量 310 个用例、Analyze、i18n 键集测试、Android arm64 Release、Windows x64 便携包与安装程序。
 - 未完成：真实平台多目标验收、安装/卸载、PiP/小窗/悬浮、tag/GitHub Release、完整仓库门禁。
 - 架构 `--strict` 仍为红，原因是既有 `domains/recorder -> domains/live` 硬违规；不要误报成本次改动失败，也不要在本轮顺手修 recorder。
