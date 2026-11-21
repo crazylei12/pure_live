@@ -1,9 +1,59 @@
-# 同房间同步显示另一间直播弹幕：工作结果说明
+# 同房间同步显示多个直播间的弹幕：工作结果说明
 
-- 日期：2026-11-17
-- 状态：功能已提交到本地 `master`（未推送）；Windows x64 Release 便携包与安装程序已构建并核验；用户已手工试用 Windows 构建；真实平台与完整设备验收仍未完成
-- 源码基线：`master` @ `233a252ac5502477c2eb21ebd80204d577b2e125`，应用版本 `3.1.19+4108`（Windows 构建号 4108）
+- 日期：2026-11-21（初版 2026-11-17）
+- 状态：多目标扩展已完成源码提交、推送和 Android/Windows Release 构建；应用级全量测试（310 个用例）与 Analyze 通过；真实平台、设备、安装/卸载和小窗/PiP 验收未做
+- 源码基线：`master` @ `b8128c0dd6f555f04e33b8180e39d9f1196de3e6`（功能 `b93d953eb`，版本 `b8128c0dd`）；已推送到 `fork/master`；应用版本 `3.1.21+4110`
 - 技术交接文档：[MIRROR_DANMAKU_AI_HANDOFF_2026_11_17.md](./MIRROR_DANMAKU_AI_HANDOFF_2026_11_17.md)
+
+## 2026-11-21 多目标扩展（当前有效）
+
+### 结果
+
+现在一个 A 直播间可以同时同步多个 B 直播间（上限 9 个，与现有多视图房间数一致）。每个 B 都有独立的解析、连接、状态、启停、重试和删除操作；一个目标未开播、连接失败或被停用，不会阻塞或断开其他目标。A 的侧栏、画面和小窗只接收 `LiveMessageType.chat`，其余约束与初版一致。
+
+配置按 A 的房间身份存到 `mirror_danmaku_v2:<A identityKey>`。初版的单目标键 `mirror_danmaku_v1:<A identityKey>` 仍可读取；下一次成功写入后自动删除旧键，读取时优先使用列表键。删除最后一个目标会同时清理两个键。
+
+### 已完成的源码变更
+
+- 存储：`mirror_danmaku_store.dart` 改为 `readAll` / `writeAll` / `remove`；列表载荷为 `{version: 2, targets: [...]}`；读取时过滤 A 自己和重复目标；损坏的列表不会回退到旧配置；写/删失败仍返回 `false`。
+- 控制器：`mirror_danmaku_controller.dart` 从单 `state` 改为 `MirrorDanmakuState.targets` 列表；每个目标拥有独立的 `MirrorDanmakuSession`、epoch 和异步栅栏；新增 `addAndApply`、`setEnabled(identityKey, enabled)`、`removeTarget(identityKey)`、`retry({identityKey})`；上限 `defaultMaxTargets = 9`。
+- 对话框：显示已添加目标列表，逐目标开关/重试/删除；添加表单保留“解析/预览”和“添加后立即启用”；添加后对话框保持打开，便于连续添加；达到上限或重复目标时给出提示。
+- 文案：中英文同步新增目标列表、添加、上限、重复目标等键；连接/失败/未开播系统消息带上目标名称。
+- 测试：存储、控制器、对话框测试按列表/多会话重写；其余解析、会话、转发、配置测试保持通过。
+
+### 验证结果
+
+- 7 个镜像弹幕测试文件全部通过，共 58 个用例：store 7、controller 19、dialog 5、session 10、config 4、resolver 8、forwarding 5。
+- 应用级全量测试：`tool/local_ci.ps1 -Scope Focused -TestPath test -Analyze -SkipPubGet`，310 个用例全部通过，`flutter analyze` 为 `No issues found!`；记录 `local-artifacts/build-records/20261121T005833237Z-quality-focused.json`。
+- `test/core/i18n_bundle_test.dart`：通过，中英文键集一致。
+- `python tool/validate_architecture.py --strict`：仍为 `EXIT:1`，唯一未批准硬违规是既有的 `domains/recorder -> domains/live/domain/global_player_service.dart`，本次改动未新增硬违规。
+
+### 提交、推送与构建
+
+- 功能提交 `b93d953eb feat(danmaku): 支持同时同步多个直播间弹幕`；版本提交 `b8128c0dd chore(release): 递增版本到 3.1.21+4110`。
+- 已推送到 `crazylei12/pure_live` 的 `master`，远端 head 与本地版本提交一致；没有 force-push。
+- 版本同步到 `pubspec.yaml`、`assets/version.json` 的顶层/Android/Windows 条目、Windows MSIX 配置和工作流默认标签；Linux/macOS/iOS 条目仍保留旧版本，因为本轮没有重建这些平台。
+- `local_ci -Scope Full` 在仓库预检阶段失败：`tool/validate_build_policy.ps1` 要求 `.github/workflows/audit-upstream.yml`、`sign-staged-android.yml`、`feature-build.yml` 等已在 `4a0cf09fe` 删除的工作流。该问题不是本次改动引入；为避免扩大范围，没有恢复这些上游已删除的工作流。
+- 接口探针 41/42：`yy.restricted_room_fallback` 返回“YY fallback stream URL missing”，连续两次一致；与本功能无关，未修复。
+- Android `arm64-v8a` Release：`local-artifacts/3.1.21-4110/PureLive-3.1.21-4110-android-arm64-v8a-release.apk`，139,037,269 字节，SHA-256 `7afe785a55a6f415c07413edc2430e03903cdecbe07a805f0b3e9a0b91041d64`；`versionName=3.1.21`、Manifest `versionCode=6110`（基础 4110 + arm64 偏移 2000）、`minSdk=26`、Release 签名、18 个原生库，APK 内容与 16 KB ELF 对齐检查通过。
+- Windows x64 Release：`local-artifacts/3.1.21-4110/PureLive-3.1.21-4110-windows-x64-portable.zip`（81,005,079 字节，SHA-256 `1bab6574abbab21bfa9660a0aa7041d1e63d6e0596dab66ea2edb4bbc02776d9`）和 `PureLive-3.1.21-4110-windows-x64-setup.exe`（63,033,029 字节，SHA-256 `ab1dff2505993300dc2d380996b29b413a0411fe9b3a11d60d70e8203c3d06ae`）；安装程序 ProductVersion 为 `3.1.21`，未签名。便携包已核对 MSVC 运行库、`WebView2Loader.dll`、`libffmpegkit.dll`，无 `kernel_blob.bin` 或开发文件。
+- Android 第一次构建因本地生成文件 `GeneratedPluginRegistrant.java` 残留 `integration_test` 开发插件注册而失败；删除该开发插件注册后重建成功。生成文件不入库，源码未为此改动。
+- 未创建 Git tag 或 GitHub Release；`download_url` 只是版本声明，不代表发布已完成。
+
+### 尚未完成与验收边界
+
+- 已完成 Git 提交、推送和 Android/Windows Release 构建；未创建 tag/Release，未上传附件，未刷新 `assets/releases.json`。
+- 没有真实平台、Android 设备、Windows 安装/卸载、侧栏/画面/小窗、PiP 和小窗悬浮的手工验收；单元测试通过不等于真实平台可用。
+- 多个 B 的消息仍不加来源前缀/字段，侧栏和画面无法从文本区分 A/B；这是初版已确认的取舍。
+- 目标列表只支持添加、启用/停用、重试和删除，不支持原地编辑 URL；修改目标需删除后重新添加。
+- B 未开播只保存配置并等待手动重试，不做定时轮询。
+- 每个 A 最多 9 个目标；超过上限时拒绝添加并提示。
+
+---
+
+## 旧版记录（2026-11-17 单目标初版）
+
+> 以下内容保留为历史记录。初版“一个 A 只配一个 B”的限制已被 2026-11-21 多目标扩展覆盖；文件行号、提交、构建版本和“当前状态”均属于 2026-11-17 检查点，不代表当前工作区。
 
 ## 结果
 
@@ -121,7 +171,7 @@
 
 以下多数是已确认的首版取舍，不是遗漏：
 
-- **多个 B**：每个 A 最多一个 B；不支持列表、多会话管理。
+- **多个 B**：初版每个 A 最多一个 B；**2026-11-21 已扩展为最多 9 个目标，见顶部章节**。
 - **来源标记**：B 消息不加前缀，也不给 `LiveMessage` 增加来源字段；侧栏、画面、小窗中无法从文本区分 A/B。
 - **B 的礼物/SC/观众数/公告/撤回**：不转发；B 已撤回的消息可能留在 A 的历史里，直到被 500 条上限挤出。
 - **B 未开播自动恢复**：只保存配置、手动重试，不做定时轮询；A 打开期间 B 开播不会自动连接。
