@@ -11,33 +11,50 @@ import 'package:pure_live/domains/live/presentation/playback/services/mirror_dan
 
 enum MirrorDanmakuStatus { idle, disabled, resolving, connecting, connected, offline, failed }
 
-class MirrorDanmakuState {
-  const MirrorDanmakuState({this.config, this.target, this.status = MirrorDanmakuStatus.idle, this.message});
+class MirrorDanmakuTargetState {
+  const MirrorDanmakuTargetState({
+    required this.config,
+    this.target,
+    this.status = MirrorDanmakuStatus.idle,
+    this.message,
+  });
 
-  final MirrorDanmakuConfig? config;
+  final MirrorDanmakuConfig config;
   final LiveRoom? target;
   final MirrorDanmakuStatus status;
   final String? message;
 
-  bool get hasConfig => config != null;
+  String get identityKey => config.identityKey;
+
+  bool get isEnabled => config.enabled;
 
   bool get isBusy => status == MirrorDanmakuStatus.resolving || status == MirrorDanmakuStatus.connecting;
 
   bool get isConnected => status == MirrorDanmakuStatus.connected;
+}
 
-  MirrorDanmakuState copyWith({
-    MirrorDanmakuConfig? config,
-    bool clearConfig = false,
-    LiveRoom? target,
-    bool clearTarget = false,
-    MirrorDanmakuStatus? status,
-    String? message,
-    bool clearMessage = false,
-  }) {
+class MirrorDanmakuState {
+  const MirrorDanmakuState({this.targets = const <MirrorDanmakuTargetState>[], this.message});
+
+  final List<MirrorDanmakuTargetState> targets;
+  final String? message;
+
+  bool get isEmpty => targets.isEmpty;
+
+  bool get isNotEmpty => targets.isNotEmpty;
+
+  int get count => targets.length;
+
+  MirrorDanmakuTargetState? targetFor(String identityKey) {
+    for (final target in targets) {
+      if (target.identityKey == identityKey) return target;
+    }
+    return null;
+  }
+
+  MirrorDanmakuState copyWith({List<MirrorDanmakuTargetState>? targets, String? message, bool clearMessage = false}) {
     return MirrorDanmakuState(
-      config: clearConfig ? null : (config ?? this.config),
-      target: clearTarget ? null : (target ?? this.target),
-      status: status ?? this.status,
+      targets: targets ?? this.targets,
       message: clearMessage ? null : (message ?? this.message),
     );
   }
@@ -57,11 +74,12 @@ String mirrorDanmakuResolveFailureText(MirrorDanmakuResolveFailure? failure) {
   };
 }
 
-/// Owns the second danmaku transport for one A room.
+/// Owns the mirrored danmaku transports for one A room.
 ///
-/// It is not a global singleton: every [LivePlayController] owns one instance,
-/// and every asynchronous result is fenced by the attached host identity and
-/// the current epoch before it can touch the room.
+/// It is not a global singleton: every [LivePlayController] owns one instance.
+/// Each target has its own session and epoch, so one slow or failed B room
+/// cannot cancel or re-target another B room. Every asynchronous result is
+/// additionally fenced by the attached host identity before it can touch A.
 class MirrorDanmakuController {
   MirrorDanmakuController({
     required this.host,
@@ -70,37 +88,39 @@ class MirrorDanmakuController {
     MirrorDanmakuEngineFactory? engineFactory,
     MirrorDanmakuFilterPolicyProvider? filterPolicyProvider,
     RxBool? hideDanmaku,
+    int maxTargets = defaultMaxTargets,
   }) : store = store ?? MirrorDanmakuStore(),
-       resolver = resolver ?? MirrorDanmakuResolver() {
+       resolver = resolver ?? MirrorDanmakuResolver(),
+       // The factory stays private while callers pass it by a public name.
+       // ignore: prefer_initializing_formals
+       _engineFactory = engineFactory,
+       _filterPolicyProvider = filterPolicyProvider ?? MirrorDanmakuFilterPolicy.fromAppState,
+       maxTargets = maxTargets.clamp(1, defaultMaxTargets).toInt() {
     _hideDanmaku = hideDanmaku;
-    _session = MirrorDanmakuSession(
-      engineFactory: engineFactory,
-      filterPolicyProvider: filterPolicyProvider ?? MirrorDanmakuFilterPolicy.fromAppState,
-      onChatMessage: _handleChat,
-      onReady: _handleReady,
-      onReconnect: _handleReconnect,
-      onTerminalError: _handleTerminalError,
-    );
     final hidden = _hideDanmaku;
     if (hidden != null) {
       _hideWorker = ever<bool>(hidden, _handleHideChanged);
     }
   }
 
+  /// Matches the app's existing multiview upper bound. Each target opens its
+  /// own transport, so more than this would multiply socket/message load.
+  static const int defaultMaxTargets = 9;
+
   final MirrorDanmakuHost host;
   final MirrorDanmakuStore store;
   final MirrorDanmakuResolver resolver;
+  final int maxTargets;
   final Rx<MirrorDanmakuState> state = const MirrorDanmakuState().obs;
 
+  final MirrorDanmakuEngineFactory? _engineFactory;
+  final MirrorDanmakuFilterPolicyProvider _filterPolicyProvider;
+  final List<_MirrorDanmakuRuntime> _runtimes = <_MirrorDanmakuRuntime>[];
+
   late final RxBool? _hideDanmaku;
-  late final MirrorDanmakuSession _session;
   Worker? _hideWorker;
-  dio.CancelToken? _resolveCancel;
   LiveRoom? _hostRoom;
-  int _epoch = 0;
   bool _disposed = false;
-  bool _connectedAnnounced = false;
-  String? _lastFailureText;
 
   LiveRoom? get hostRoom => _hostRoom;
 
@@ -108,15 +128,15 @@ class MirrorDanmakuController {
 
   bool get globallyHidden => _hideDanmaku?.value ?? false;
 
-  /// Reads the persisted target without changing the attached host.
-  ///
-  /// The editor uses this before [attachHost] finishes so its initial switch
-  /// and URL cannot come from the previous room or empty defaults.
-  MirrorDanmakuConfig? readSavedConfig(LiveRoom hostRoom) => store.read(hostRoom);
+  /// Reads persisted targets for [hostRoom], capped to [maxTargets], without
+  /// changing the attached host.
+  List<MirrorDanmakuConfig> readSavedConfigs(LiveRoom hostRoom) {
+    return store.readAll(hostRoom).take(maxTargets).toList(growable: false);
+  }
 
-  /// Reads the host's persisted target and starts it when the host is live and
-  /// the global danmaku switch is on. Repeated calls for the same host are
-  /// idempotent.
+  /// Reads the host's persisted targets and starts every enabled one when the
+  /// host is live and the global danmaku switch is on. Repeated calls for the
+  /// same host are idempotent.
   Future<void> attachHost(LiveRoom hostRoom) async {
     if (_disposed) return;
     if (host.hostIdentity != hostRoom.identityKey) return;
@@ -126,7 +146,7 @@ class MirrorDanmakuController {
     if (current != null && current.identityKey == normalized.identityKey) {
       // Refresh the stored detail so a room that turned into a replay/carousel
       // entry is judged by its current state, then let the gate stop the B
-      // transport instead of keeping a stale live session alive.
+      // transports instead of keeping a stale live session alive.
       _hostRoom = normalized;
       await ensureConnected();
       return;
@@ -136,35 +156,26 @@ class MirrorDanmakuController {
     }
 
     _hostRoom = normalized;
-    _lastFailureText = null;
-    _connectedAnnounced = false;
-    final config = store.read(normalized);
-    if (config == null) {
-      state.value = const MirrorDanmakuState();
-      return;
-    }
-    state.value = MirrorDanmakuState(
-      config: config,
-      status: config.enabled ? MirrorDanmakuStatus.idle : MirrorDanmakuStatus.disabled,
-    );
-    if (!config.enabled || !_canRun(normalized)) return;
-    await _resolveAndConnect(++_epoch);
+    _runtimes
+      ..clear()
+      ..addAll(readSavedConfigs(normalized).map(_createRuntime));
+    _publish();
+    if (!_canRun(normalized)) return;
+    await _startEnabledTargets();
   }
 
-  /// Stops the mirror transport and clears room-bound state. A late result from
-  /// the previous host is rejected through [hostIdentity] as well as the epoch.
+  /// Stops every mirror transport and clears room-bound state. Late results
+  /// from the previous host are rejected through [hostIdentity] as well as each
+  /// runtime's epoch and identity.
   Future<void> detachHost() async {
-    _epoch++;
-    _resolveCancel?.cancel();
-    _resolveCancel = null;
     _hostRoom = null;
-    _connectedAnnounced = false;
-    _lastFailureText = null;
-    state.value = const MirrorDanmakuState();
-    await _session.disconnect();
+    final runtimes = List<_MirrorDanmakuRuntime>.of(_runtimes);
+    _runtimes.clear();
+    _publish();
+    await Future.wait(runtimes.map(_disposeRuntime));
   }
 
-  /// Resolves a pasted link for the dialog without changing the saved target.
+  /// Resolves a pasted link for the dialog without changing saved targets.
   Future<MirrorDanmakuResolveResult> preview(String input, {dio.CancelToken? cancelToken}) async {
     final current = _hostRoom;
     if (current == null || !_hostMatches(current)) {
@@ -173,9 +184,9 @@ class MirrorDanmakuController {
     return resolver.resolve(input: input, host: current, cancelToken: cancelToken);
   }
 
-  /// Persists the target first. A failed write never reports that the new
-  /// target was enabled.
-  Future<bool> saveAndApply(MirrorDanmakuConfig config, {MirrorDanmakuResolveResult? resolved}) async {
+  /// Appends one target after persisting the complete list. A failed write
+  /// never reports that the new target was added or enabled.
+  Future<bool> addAndApply(MirrorDanmakuConfig config, {MirrorDanmakuResolveResult? resolved}) async {
     final current = _hostRoom;
     if (_disposed || current == null || !_hostMatches(current)) return false;
     if (config.matchesHost(current)) {
@@ -188,234 +199,357 @@ class MirrorDanmakuController {
       _reportTransient(i18n('mirror_danmaku_invalid_link'));
       return false;
     }
+    if (_runtimes.any((runtime) => runtime.config.identityKey == normalized.identityKey)) {
+      _reportTransient(i18n('mirror_danmaku_duplicate_target'));
+      return false;
+    }
+    if (_runtimes.length >= maxTargets) {
+      _reportTransient(i18n('mirror_danmaku_limit_reached', args: <String, String>{'max': '$maxTargets'}));
+      return false;
+    }
 
-    final saved = await store.write(current, normalized);
+    final configs = <MirrorDanmakuConfig>[for (final runtime in _runtimes) runtime.config, normalized];
+    final saved = await store.writeAll(current, configs);
     if (!saved) {
       _reportTransient(i18n('mirror_danmaku_save_failed'));
       return false;
     }
+    if (_disposed) return true;
 
-    final epoch = ++_epoch;
-    _resolveCancel?.cancel();
-    _resolveCancel = null;
-    _connectedAnnounced = false;
-    _lastFailureText = null;
-    final matchingPreview = _previewMatches(resolved, normalized);
-    state.value = MirrorDanmakuState(
-      config: normalized,
-      target: matchingPreview ? resolved!.room : null,
-      status: normalized.enabled ? MirrorDanmakuStatus.idle : MirrorDanmakuStatus.disabled,
-    );
-    await _session.disconnect();
-    if (_disposed || epoch != _epoch) return true;
+    final runtime = _createRuntime(normalized);
+    _runtimes.add(runtime);
+    final epoch = ++runtime.epoch;
+    _publish();
     if (!normalized.enabled) return true;
-    if (!_canRun(current)) return true;
 
-    if (matchingPreview) {
-      final target = resolved!.room!;
-      if (!resolved.canConnect) {
-        state.value = state.value.copyWith(target: target, status: MirrorDanmakuStatus.offline, clearMessage: true);
-        host.addMirrorSystemMessage(i18n('mirror_danmaku_offline_message'));
+    final matchingPreview = _previewMatches(resolved, normalized);
+    final previewRoom = matchingPreview ? resolved!.room : null;
+    if (previewRoom != null) {
+      runtime.target = previewRoom;
+      if (!resolved!.canConnect) {
+        runtime.status = MirrorDanmakuStatus.offline;
+        runtime.message = null;
+        _publish();
+        host.addMirrorSystemMessage(
+          i18n('mirror_danmaku_offline_message', args: <String, String>{'name': _labelFor(runtime)}),
+        );
         return true;
       }
-      await _connectTarget(target, epoch);
+      if (!_canRun(current)) return true;
+      await _connectTarget(runtime, previewRoom, epoch);
       return true;
     }
 
-    await _resolveAndConnect(epoch, announceOffline: true);
+    if (!_canRun(current)) return true;
+    await _resolveAndConnect(runtime, epoch, announceOffline: true);
     return true;
   }
 
-  Future<bool> disable() async {
+  /// Writes one target's enabled flag and starts or stops only that transport.
+  Future<bool> setEnabled(String identityKey, bool enabled) async {
     final current = _hostRoom;
-    final config = state.value.config;
-    if (_disposed || current == null || config == null) return false;
+    if (_disposed || current == null || !_hostMatches(current)) return false;
+    final index = _runtimes.indexWhere((runtime) => runtime.config.identityKey == identityKey);
+    if (index < 0) return false;
+    final runtime = _runtimes[index];
+    if (runtime.config.enabled == enabled) return true;
 
-    final updated = config.copyWith(enabled: false);
-    final saved = await store.write(current, updated);
+    final configs = <MirrorDanmakuConfig>[
+      for (var i = 0; i < _runtimes.length; i++)
+        i == index ? runtime.config.copyWith(enabled: enabled) : _runtimes[i].config,
+    ];
+    final saved = await store.writeAll(current, configs);
     if (!saved) {
       _reportTransient(i18n('mirror_danmaku_save_failed'));
       return false;
     }
+    if (_disposed || runtime.disposed) return true;
 
-    _epoch++;
-    _resolveCancel?.cancel();
-    _resolveCancel = null;
-    _connectedAnnounced = false;
-    _lastFailureText = null;
-    state.value = state.value.copyWith(
-      config: updated,
-      status: MirrorDanmakuStatus.disabled,
-      clearTarget: true,
-      clearMessage: true,
-    );
-    await _session.disconnect();
+    runtime.config = configs[index];
+    final epoch = ++runtime.epoch;
+    runtime.resolveCancel?.cancel();
+    runtime.resolveCancel = null;
+    runtime.connectedAnnounced = false;
+    runtime.lastFailureText = null;
+    runtime.target = null;
+    runtime.message = null;
+    runtime.status = enabled ? MirrorDanmakuStatus.idle : MirrorDanmakuStatus.disabled;
+    _publish();
+    await runtime.session.disconnect();
+    if (_disposed || runtime.disposed || epoch != runtime.epoch) return true;
+    if (!enabled || !_canRun(current)) return true;
+    await _resolveAndConnect(runtime, epoch);
     return true;
   }
 
-  Future<bool> remove() async {
+  /// Removes one target and stops only its transport. Removing the last target
+  /// also deletes the room's storage entry.
+  Future<bool> removeTarget(String identityKey) async {
     final current = _hostRoom;
-    if (_disposed || current == null) return false;
+    if (_disposed || current == null || !_hostMatches(current)) return false;
+    final index = _runtimes.indexWhere((runtime) => runtime.config.identityKey == identityKey);
+    if (index < 0) return false;
 
-    final removed = await store.remove(current);
-    if (!removed) {
+    final configs = <MirrorDanmakuConfig>[
+      for (var i = 0; i < _runtimes.length; i++)
+        if (i != index) _runtimes[i].config,
+    ];
+    final saved = configs.isEmpty ? await store.remove(current) : await store.writeAll(current, configs);
+    if (!saved) {
       _reportTransient(i18n('mirror_danmaku_remove_failed'));
       return false;
     }
+    if (_disposed) return true;
 
-    _epoch++;
-    _resolveCancel?.cancel();
-    _resolveCancel = null;
-    _connectedAnnounced = false;
-    _lastFailureText = null;
-    state.value = const MirrorDanmakuState();
-    await _session.disconnect();
+    final runtime = _runtimes.removeAt(index);
+    _publish();
+    await _disposeRuntime(runtime);
     return true;
   }
 
-  Future<void> retry() async {
+  /// Re-resolves one target, or every enabled target when [identityKey] is
+  /// omitted. Other targets are left untouched.
+  Future<void> retry({String? identityKey}) async {
     final current = _hostRoom;
-    final config = state.value.config;
-    if (_disposed || current == null || config == null || !config.enabled) return;
-    if (!_canRun(current)) return;
-
-    final epoch = ++_epoch;
-    _resolveCancel?.cancel();
-    _resolveCancel = null;
-    _lastFailureText = null;
-    state.value = state.value.copyWith(status: MirrorDanmakuStatus.idle, clearMessage: true);
-    await _session.disconnect();
-    if (_disposed || epoch != _epoch || !_canRun(current)) return;
-    await _resolveAndConnect(epoch, announceOffline: true);
+    if (_disposed || current == null || !_hostMatches(current)) return;
+    final targets = _runtimes
+        .where(
+          (runtime) => runtime.config.enabled && (identityKey == null || runtime.config.identityKey == identityKey),
+        )
+        .toList(growable: false);
+    await Future.wait(targets.map((runtime) => _startTarget(runtime, announceOffline: true)));
   }
 
-  /// Reconnects after a presentation/lifecycle recovery. A connected session is
-  /// already current and stays untouched; a host that is no longer live (or is
-  /// a replay/carousel entry) drops its stale B session instead.
+  /// Reconnects after a presentation/lifecycle recovery. Connected targets are
+  /// current and stay untouched; a host that is no longer live (or is a
+  /// replay/carousel entry) drops all stale B sessions instead.
   Future<void> ensureConnected() async {
     final current = _hostRoom;
-    final config = state.value.config;
-    if (_disposed || current == null || config == null || !config.enabled) return;
+    if (_disposed || current == null) return;
     if (!_canRun(current)) {
-      // The session may still be connecting, so do not rely on isConnected:
-      // bumping the epoch and queueing a disconnect invalidates any in-flight
-      // connect before it can publish a live transport.
-      _epoch++;
-      _resolveCancel?.cancel();
-      _resolveCancel = null;
-      _connectedAnnounced = false;
-      await _session.disconnect();
-      if (_disposed) return;
-      state.value = state.value.copyWith(status: MirrorDanmakuStatus.idle, clearMessage: true);
+      // A session may still be connecting, so do not rely on isConnected:
+      // bumping each runtime's epoch and queueing a disconnect invalidates any
+      // in-flight connect before it can publish a live transport.
+      await _stopAllForGate();
       return;
     }
-    if (_session.isConnected || state.value.isBusy) return;
-    await _resolveAndConnect(++_epoch);
+    final targets = _runtimes
+        .where(
+          (runtime) => !runtime.disposed && runtime.config.enabled && !runtime.isBusy && !runtime.session.isConnected,
+        )
+        .toList(growable: false);
+    if (targets.isEmpty) return;
+    await Future.wait(targets.map(_startTarget));
   }
 
-  Future<void> _resolveAndConnect(int epoch, {bool announceOffline = false}) async {
+  Future<void> _startEnabledTargets() async {
     final current = _hostRoom;
-    final config = state.value.config;
-    if (_disposed || current == null || config == null || !config.enabled) return;
-    if (!_canRun(current)) return;
+    if (_disposed || current == null || !_canRun(current)) return;
+    final targets = _runtimes.where((runtime) => runtime.config.enabled && !runtime.disposed).toList(growable: false);
+    if (targets.isEmpty) return;
+    await Future.wait(targets.map(_startTarget));
+  }
 
-    _resolveCancel?.cancel();
+  Future<void> _startTarget(_MirrorDanmakuRuntime runtime, {bool announceOffline = false}) async {
+    if (_disposed || runtime.disposed) return;
+    final epoch = ++runtime.epoch;
+    runtime.resolveCancel?.cancel();
+    runtime.resolveCancel = null;
+    runtime.connectedAnnounced = false;
+    runtime.lastFailureText = null;
+    runtime.target = null;
+    runtime.message = null;
+    runtime.status = runtime.config.enabled ? MirrorDanmakuStatus.idle : MirrorDanmakuStatus.disabled;
+    _publish();
+    await runtime.session.disconnect();
+    if (_disposed || runtime.disposed || epoch != runtime.epoch) return;
+    if (!runtime.config.enabled) return;
+    await _resolveAndConnect(runtime, epoch, announceOffline: announceOffline);
+  }
+
+  Future<void> _resolveAndConnect(_MirrorDanmakuRuntime runtime, int epoch, {bool announceOffline = false}) async {
+    final current = _hostRoom;
+    if (_disposed || current == null || runtime.disposed || !runtime.config.enabled || !_canRun(current)) return;
+
+    runtime.resolveCancel?.cancel();
     final cancel = dio.CancelToken();
-    _resolveCancel = cancel;
-    state.value = state.value.copyWith(status: MirrorDanmakuStatus.resolving, clearMessage: true);
+    runtime.resolveCancel = cancel;
+    runtime.status = MirrorDanmakuStatus.resolving;
+    runtime.message = null;
+    _publish();
 
     final result = await resolver.resolveRoom(
       host: current,
-      candidate: LiveRoom(platform: config.platform, roomId: config.roomId),
+      candidate: LiveRoom(platform: runtime.config.platform, roomId: runtime.config.roomId),
       cancelToken: cancel,
     );
-    if (_disposed || epoch != _epoch || !identical(_resolveCancel, cancel) || !_canRun(current)) return;
-    _resolveCancel = null;
+    if (_disposed ||
+        runtime.disposed ||
+        epoch != runtime.epoch ||
+        !identical(runtime.resolveCancel, cancel) ||
+        !_canRun(current)) {
+      return;
+    }
+    runtime.resolveCancel = null;
 
     if (!result.isSuccess) {
-      _setFailure(result.failure);
+      _setFailure(runtime, mirrorDanmakuResolveFailureText(result.failure));
       return;
     }
     final target = result.room!;
-    state.value = state.value.copyWith(target: target);
+    runtime.target = target;
+    _publish();
     if (!result.canConnect) {
-      state.value = state.value.copyWith(status: MirrorDanmakuStatus.offline, clearMessage: true);
-      if (announceOffline) host.addMirrorSystemMessage(i18n('mirror_danmaku_offline_message'));
+      runtime.status = MirrorDanmakuStatus.offline;
+      runtime.message = null;
+      _publish();
+      if (announceOffline) {
+        host.addMirrorSystemMessage(
+          i18n('mirror_danmaku_offline_message', args: <String, String>{'name': _labelFor(runtime)}),
+        );
+      }
       return;
     }
-    await _connectTarget(target, epoch);
+    await _connectTarget(runtime, target, epoch);
   }
 
-  Future<void> _connectTarget(LiveRoom target, int epoch) async {
+  Future<void> _connectTarget(_MirrorDanmakuRuntime runtime, LiveRoom target, int epoch) async {
     final current = _hostRoom;
-    if (_disposed || current == null || !_canRun(current)) return;
-    state.value = state.value.copyWith(target: target, status: MirrorDanmakuStatus.connecting, clearMessage: true);
-    _connectedAnnounced = false;
-    await _session.connect(target);
-    if (_disposed || epoch != _epoch || !_canRun(current)) return;
-    if (_session.isConnected) {
-      state.value = state.value.copyWith(status: MirrorDanmakuStatus.connected, clearMessage: true);
-    } else if (state.value.status == MirrorDanmakuStatus.connecting) {
-      _setFailure(null);
+    if (_disposed || current == null || runtime.disposed || !_canRun(current)) return;
+    runtime.target = target;
+    runtime.status = MirrorDanmakuStatus.connecting;
+    runtime.message = null;
+    runtime.connectedAnnounced = false;
+    _publish();
+    await runtime.session.connect(target);
+    if (_disposed || runtime.disposed || epoch != runtime.epoch || !_canRun(current)) return;
+    if (runtime.session.isConnected) {
+      runtime.status = MirrorDanmakuStatus.connected;
+      runtime.message = null;
+      _publish();
+    } else if (runtime.status == MirrorDanmakuStatus.connecting) {
+      _setFailure(runtime, mirrorDanmakuResolveFailureText(null));
     }
   }
 
-  void _handleChat(LiveMessage message) {
+  /// Stops every transport without detaching the host. Used by the global
+  /// danmaku switch and by hosts that stopped being eligible.
+  Future<void> _stopAllForGate() async {
+    final tasks = <Future<void>>[];
+    for (final runtime in _runtimes) {
+      runtime.epoch++;
+      runtime.resolveCancel?.cancel();
+      runtime.resolveCancel = null;
+      runtime.connectedAnnounced = false;
+      runtime.lastFailureText = null;
+      runtime.target = null;
+      runtime.message = null;
+      runtime.status = runtime.config.enabled ? MirrorDanmakuStatus.idle : MirrorDanmakuStatus.disabled;
+      tasks.add(runtime.session.disconnect());
+    }
+    _publish();
+    await Future.wait(tasks);
+  }
+
+  void _handleChat(_MirrorDanmakuRuntime runtime, LiveMessage message) {
     final current = _hostRoom;
-    if (_disposed || current == null || !_canRun(current)) return;
+    if (_disposed || current == null || !_runtimeAlive(runtime) || !_canRun(current)) return;
     host.applyMirrorChat(message);
   }
 
-  void _handleReady() {
+  void _handleReady(_MirrorDanmakuRuntime runtime) {
     final current = _hostRoom;
-    if (_disposed || current == null || !_canRun(current)) return;
-    state.value = state.value.copyWith(status: MirrorDanmakuStatus.connected, clearMessage: true);
-    if (_connectedAnnounced) return;
-    _connectedAnnounced = true;
-    _lastFailureText = null;
-    host.addMirrorSystemMessage(i18n('mirror_danmaku_connected_message', args: {'name': _targetLabel()}));
+    if (_disposed || current == null || !_runtimeAlive(runtime) || !_canRun(current)) return;
+    runtime.status = MirrorDanmakuStatus.connected;
+    runtime.message = null;
+    _publish();
+    if (runtime.connectedAnnounced) return;
+    runtime.connectedAnnounced = true;
+    runtime.lastFailureText = null;
+    host.addMirrorSystemMessage(
+      i18n('mirror_danmaku_connected_message', args: <String, String>{'name': _labelFor(runtime)}),
+    );
   }
 
-  void _handleReconnect(String reason) {
+  void _handleReconnect(_MirrorDanmakuRuntime runtime, String reason) {
     final current = _hostRoom;
-    if (_disposed || current == null || !_canRun(current)) return;
-    state.value = state.value.copyWith(status: MirrorDanmakuStatus.connecting, clearMessage: true);
+    if (_disposed || current == null || !_runtimeAlive(runtime) || !_canRun(current)) return;
+    runtime.status = MirrorDanmakuStatus.connecting;
+    runtime.message = null;
+    _publish();
   }
 
-  void _handleTerminalError(String reason) {
+  void _handleTerminalError(_MirrorDanmakuRuntime runtime, String reason) {
     final current = _hostRoom;
-    if (_disposed || current == null || !_canRun(current)) return;
-    final text = reason.trim().isEmpty ? i18n('mirror_danmaku_status_failed') : reason.trim();
-    _setFailureText(text);
+    if (_disposed || current == null || !_runtimeAlive(runtime) || !_canRun(current)) return;
+    final text = reason.trim().isEmpty ? mirrorDanmakuResolveFailureText(null) : reason.trim();
+    _setFailure(runtime, text);
   }
 
   void _handleHideChanged(bool hidden) {
     if (_disposed) return;
     if (hidden) {
-      _epoch++;
-      _resolveCancel?.cancel();
-      _resolveCancel = null;
-      _connectedAnnounced = false;
-      state.value = state.value.copyWith(status: MirrorDanmakuStatus.idle, clearTarget: true, clearMessage: true);
-      unawaited(_session.disconnect());
+      unawaited(_stopAllForGate());
       return;
     }
     unawaited(ensureConnected());
   }
 
-  void _setFailure(MirrorDanmakuResolveFailure? failure) {
-    _setFailureText(mirrorDanmakuResolveFailureText(failure));
-  }
-
-  void _setFailureText(String text) {
-    state.value = state.value.copyWith(status: MirrorDanmakuStatus.failed, message: text);
-    if (_lastFailureText == text) return;
-    _lastFailureText = text;
-    host.addMirrorSystemMessage(i18n('mirror_danmaku_connect_failed_message', args: {'reason': text}));
+  void _setFailure(_MirrorDanmakuRuntime runtime, String text) {
+    runtime.status = MirrorDanmakuStatus.failed;
+    runtime.message = text;
+    _publish();
+    if (runtime.lastFailureText == text) return;
+    runtime.lastFailureText = text;
+    host.addMirrorSystemMessage(
+      i18n('mirror_danmaku_connect_failed_message', args: <String, String>{'name': _labelFor(runtime), 'reason': text}),
+    );
   }
 
   void _reportTransient(String text) {
+    if (_disposed) return;
     state.value = state.value.copyWith(message: text);
+  }
+
+  void _publish() {
+    if (_disposed) return;
+    state.value = MirrorDanmakuState(
+      targets: <MirrorDanmakuTargetState>[
+        for (final runtime in _runtimes)
+          MirrorDanmakuTargetState(
+            config: runtime.config,
+            target: runtime.target,
+            status: runtime.status,
+            message: runtime.message,
+          ),
+      ],
+    );
+  }
+
+  _MirrorDanmakuRuntime _createRuntime(MirrorDanmakuConfig config) {
+    late final _MirrorDanmakuRuntime runtime;
+    final session = MirrorDanmakuSession(
+      engineFactory: _engineFactory,
+      filterPolicyProvider: _filterPolicyProvider,
+      onChatMessage: (message) => _handleChat(runtime, message),
+      onReady: () => _handleReady(runtime),
+      onReconnect: (reason) => _handleReconnect(runtime, reason),
+      onTerminalError: (reason) => _handleTerminalError(runtime, reason),
+    );
+    runtime = _MirrorDanmakuRuntime(config: config, session: session);
+    return runtime;
+  }
+
+  Future<void> _disposeRuntime(_MirrorDanmakuRuntime runtime) async {
+    runtime.disposed = true;
+    runtime.epoch++;
+    runtime.resolveCancel?.cancel();
+    runtime.resolveCancel = null;
+    await runtime.session.disconnect();
+  }
+
+  bool _runtimeAlive(_MirrorDanmakuRuntime runtime) {
+    return !_disposed && !runtime.disposed && _runtimes.contains(runtime);
   }
 
   bool _canRun(LiveRoom current) {
@@ -449,16 +583,20 @@ class MirrorDanmakuController {
         room.normalizedRoomId == config.roomId;
   }
 
-  String _targetLabel() {
-    final target = state.value.target;
-    final config = state.value.config;
+  String _labelFor(_MirrorDanmakuRuntime runtime) {
+    final target = runtime.target;
+    final config = runtime.config;
     final nick = target?.nick?.trim() ?? '';
     if (nick.isNotEmpty) return nick;
+    final storedNick = config.nick.trim();
+    if (storedNick.isNotEmpty) return storedNick;
     final title = target?.title?.trim() ?? '';
     if (title.isNotEmpty) return title;
-    final platform = config?.platform ?? '';
+    final storedTitle = config.title.trim();
+    if (storedTitle.isNotEmpty) return storedTitle;
+    final platform = config.platform;
     final platformName = platform.isNotEmpty && Sites.isSupported(platform) ? Sites.of(platform).name : platform;
-    final roomId = config?.roomId ?? '';
+    final roomId = config.roomId;
     return '$platformName $roomId'.trim();
   }
 
@@ -467,17 +605,34 @@ class MirrorDanmakuController {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    _epoch++;
-    _resolveCancel?.cancel();
-    _resolveCancel = null;
+    final runtimes = List<_MirrorDanmakuRuntime>.of(_runtimes);
+    _runtimes.clear();
     _hideWorker?.dispose();
     _hideWorker = null;
     state.close();
-    await _session.disconnect();
+    await Future.wait(runtimes.map(_disposeRuntime));
   }
 
   void onClose() {
     if (host.keepsMirrorDanmakuForFloating) return;
     unawaited(dispose());
   }
+}
+
+class _MirrorDanmakuRuntime {
+  _MirrorDanmakuRuntime({required this.config, required this.session})
+    : status = config.enabled ? MirrorDanmakuStatus.idle : MirrorDanmakuStatus.disabled;
+
+  MirrorDanmakuConfig config;
+  final MirrorDanmakuSession session;
+  LiveRoom? target;
+  MirrorDanmakuStatus status;
+  String? message;
+  int epoch = 0;
+  dio.CancelToken? resolveCancel;
+  bool connectedAnnounced = false;
+  String? lastFailureText;
+  bool disposed = false;
+
+  bool get isBusy => status == MirrorDanmakuStatus.resolving || status == MirrorDanmakuStatus.connecting;
 }

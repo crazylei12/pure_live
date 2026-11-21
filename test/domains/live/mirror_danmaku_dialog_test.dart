@@ -11,8 +11,19 @@ import 'package:pure_live/domains/live/presentation/playback/services/mirror_dan
 
 import 'mirror_danmaku_fakes.dart';
 
+MirrorDanmakuConfig _configFor(String roomId, {bool enabled = true}) {
+  return MirrorDanmakuConfig(
+    platform: 'bilibili',
+    roomId: roomId,
+    sourceUrl: 'https://live.bilibili.com/$roomId',
+    nick: 'N-$roomId',
+    title: 'T-$roomId',
+    enabled: enabled,
+  );
+}
+
 class _DialogHarness {
-  _DialogHarness({required bool enabled}) {
+  _DialogHarness({required List<MirrorDanmakuConfig> targets}) {
     host = FakeMirrorDanmakuHost(hostIdentity: hostRoom.identityKey);
     store = MirrorDanmakuStore(
       read: (key) => storage[key],
@@ -26,54 +37,58 @@ class _DialogHarness {
         return true;
       },
     );
-    storage[store.keyFor(hostRoom)] = jsonEncode(
-      MirrorDanmakuConfig(
-        platform: 'bilibili',
-        roomId: 'target-room',
-        sourceUrl: sourceUrl,
-        nick: 'B 主播',
-        title: 'B 标题',
-        enabled: enabled,
-      ).toJson(),
-    );
+    storage[store.keyFor(hostRoom)] = jsonEncode(<String, Object?>{
+      'version': MirrorDanmakuStore.payloadVersion,
+      'targets': <Map<String, Object?>>[for (final target in targets) target.toJson()],
+    });
     controller = MirrorDanmakuController(
       host: host,
       store: store,
       resolver: MirrorDanmakuResolver(
-        linkParser: (_, _) async => <String>['target-room', 'bilibili'],
-        detailLoader: (_, _) async => LiveRoom(
+        linkParser: (input, _) async => <String>[input.trim(), 'bilibili'],
+        detailLoader: (_, roomId) async => LiveRoom(
           platform: 'bilibili',
-          roomId: 'target-room',
+          roomId: roomId,
           liveStatus: LiveStatus.live,
           danmakuData: 'args',
-          nick: 'B 主播',
-          title: 'B 标题',
+          nick: 'N-$roomId',
+          title: 'T-$roomId',
         ),
         timeout: const Duration(milliseconds: 200),
       ),
-      engineFactory: (_) {
+      engineFactory: (room) {
         final engine = FakeMirrorDanmakuEngine();
         engines.add(engine);
+        enginesByRoom[room.roomId ?? ''] = engine;
         return engine;
       },
       filterPolicyProvider: () => const MirrorDanmakuFilterPolicy(),
+      maxTargets: 4,
     );
   }
-
-  static const String sourceUrl = 'https://live.bilibili.com/target-room';
 
   final LiveRoom hostRoom = LiveRoom(platform: 'bilibili', roomId: 'host-room', liveStatus: LiveStatus.live);
   final Map<String, String> storage = <String, String>{};
   final List<FakeMirrorDanmakuEngine> engines = <FakeMirrorDanmakuEngine>[];
+  final Map<String, FakeMirrorDanmakuEngine> enginesByRoom = <String, FakeMirrorDanmakuEngine>{};
   late final FakeMirrorDanmakuHost host;
   late final MirrorDanmakuStore store;
   late final MirrorDanmakuController controller;
   bool failWrites = false;
 
-  MirrorDanmakuConfig? get savedConfig {
+  List<MirrorDanmakuConfig> get savedConfigs {
     final raw = storage[store.keyFor(hostRoom)];
-    if (raw == null) return null;
-    return MirrorDanmakuConfig.fromJson(jsonDecode(raw));
+    if (raw == null) return const <MirrorDanmakuConfig>[];
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map) return const <MirrorDanmakuConfig>[];
+    final targets = decoded['targets'];
+    if (targets is! List) return const <MirrorDanmakuConfig>[];
+    final configs = <MirrorDanmakuConfig>[];
+    for (final item in targets) {
+      final config = MirrorDanmakuConfig.fromJson(item);
+      if (config != null) configs.add(config);
+    }
+    return configs;
   }
 }
 
@@ -93,50 +108,115 @@ Widget _app(_DialogHarness harness) {
   );
 }
 
-Future<void> _pumpFrames(WidgetTester tester, [int count = 8]) async {
+Future<void> _pumpFrames(WidgetTester tester, [int count = 12]) async {
   for (var i = 0; i < count; i++) {
     await tester.pump(const Duration(milliseconds: 50));
   }
 }
 
+Future<void> _openDialog(WidgetTester tester, _DialogHarness harness) async {
+  await tester.pumpWidget(_app(harness));
+  await tester.tap(find.text('open'));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
+  await _pumpFrames(tester);
+}
+
 void main() {
-  testWidgets('对话框在 attach 完成前按持久化配置初始化，保存不会重新启用', (tester) async {
-    final harness = _DialogHarness(enabled: false);
+  testWidgets('对话框按持久化配置显示目标列表，停用目标保持停用', (tester) async {
+    final harness = _DialogHarness(
+      targets: <MirrorDanmakuConfig>[_configFor('target-a', enabled: false), _configFor('target-b')],
+    );
 
-    await tester.pumpWidget(_app(harness));
-    await tester.tap(find.text('open'));
+    await _openDialog(tester, harness);
+
+    expect(find.text('N-target-a'), findsOneWidget);
+    expect(find.text('N-target-b'), findsOneWidget);
+    expect(
+      tester.widget<Switch>(find.byKey(const ValueKey<String>('mirror-danmaku-target-switch-bilibili:target-a'))).value,
+      isFalse,
+    );
+    expect(
+      tester.widget<Switch>(find.byKey(const ValueKey<String>('mirror-danmaku-target-switch-bilibili:target-b'))).value,
+      isTrue,
+    );
+    expect(harness.savedConfigs.first.enabled, isFalse);
+    expect(harness.engines, hasLength(1));
+  });
+
+  testWidgets('单独停用目标会写回并只断开该目标', (tester) async {
+    final harness = _DialogHarness(targets: <MirrorDanmakuConfig>[_configFor('target-a'), _configFor('target-b')]);
+    await _openDialog(tester, harness);
+    final engineB = harness.enginesByRoom['target-b']!;
+
+    await tester.tap(find.byKey(const ValueKey<String>('mirror-danmaku-target-switch-bilibili:target-b')));
+    await _pumpFrames(tester);
+
+    expect(harness.savedConfigs.firstWhere((config) => config.roomId == 'target-b').enabled, isFalse);
+    expect(engineB.stopCount, 1);
+    expect(harness.enginesByRoom['target-a']!.stopCount, 0);
+    expect(
+      tester.widget<Switch>(find.byKey(const ValueKey<String>('mirror-danmaku-target-switch-bilibili:target-b'))).value,
+      isFalse,
+    );
+  });
+
+  testWidgets('解析并添加第二个目标后列表和会话同步增加', (tester) async {
+    final harness = _DialogHarness(targets: <MirrorDanmakuConfig>[_configFor('target-a')]);
+    await _openDialog(tester, harness);
+
+    await tester.enterText(find.byType(TextField), 'target-b');
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-
-    expect(tester.widget<TextField>(find.byType(TextField)).controller?.text, _DialogHarness.sourceUrl);
-    expect(tester.widget<Switch>(find.byType(Switch)).value, isFalse);
-
-    await _pumpFrames(tester);
-    await tester.tap(find.widgetWithText(FilledButton, i18n('mirror_danmaku_save')));
+    final previewButton = find.widgetWithText(OutlinedButton, i18n('mirror_danmaku_preview'));
+    await tester.ensureVisible(previewButton);
+    await tester.tap(previewButton);
     await _pumpFrames(tester);
 
-    expect(harness.savedConfig?.enabled, isFalse);
-    expect(harness.controller.state.value.config?.enabled, isFalse);
-    expect(harness.engines, isEmpty);
-  }, timeout: const Timeout(Duration(seconds: 30)));
+    final addButton = find.widgetWithText(FilledButton, i18n('mirror_danmaku_add'));
+    await tester.ensureVisible(addButton);
+    await tester.tap(addButton);
+    await _pumpFrames(tester);
+
+    expect(harness.savedConfigs.map((config) => config.identityKey), contains('bilibili:target-b'));
+    expect(find.text('N-target-b'), findsOneWidget);
+    expect(harness.enginesByRoom.containsKey('target-b'), isTrue);
+    expect(find.text(i18n('mirror_danmaku_added')), findsOneWidget);
+  });
+
+  testWidgets('重复添加同一目标提示已在列表中', (tester) async {
+    final harness = _DialogHarness(targets: <MirrorDanmakuConfig>[_configFor('target-a')]);
+    await _openDialog(tester, harness);
+
+    await tester.enterText(find.byType(TextField), 'target-a');
+    await tester.pump();
+    final previewButton = find.widgetWithText(OutlinedButton, i18n('mirror_danmaku_preview'));
+    await tester.ensureVisible(previewButton);
+    await tester.tap(previewButton);
+    await _pumpFrames(tester);
+
+    final addButton = find.widgetWithText(FilledButton, i18n('mirror_danmaku_add'));
+    await tester.ensureVisible(addButton);
+    await tester.tap(addButton);
+    await _pumpFrames(tester);
+
+    expect(find.text(i18n('mirror_danmaku_duplicate_target')), findsOneWidget);
+    expect(harness.savedConfigs, hasLength(1));
+  });
 
   testWidgets('停用写盘失败时开关保持启用并显示保存失败', (tester) async {
-    final harness = _DialogHarness(enabled: true);
-
-    await tester.pumpWidget(_app(harness));
-    await tester.tap(find.text('open'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    await _pumpFrames(tester);
-    expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
+    final harness = _DialogHarness(targets: <MirrorDanmakuConfig>[_configFor('target-a')]);
+    await _openDialog(tester, harness);
 
     harness.failWrites = true;
-    await tester.tap(find.widgetWithText(OutlinedButton, i18n('mirror_danmaku_disable')));
+    await tester.tap(find.byKey(const ValueKey<String>('mirror-danmaku-target-switch-bilibili:target-a')));
     await _pumpFrames(tester);
 
-    expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
-    expect(harness.controller.state.value.config?.enabled, isTrue);
-    expect(harness.savedConfig?.enabled, isTrue);
+    expect(
+      tester.widget<Switch>(find.byKey(const ValueKey<String>('mirror-danmaku-target-switch-bilibili:target-a'))).value,
+      isTrue,
+    );
+    expect(harness.savedConfigs.single.enabled, isTrue);
+    expect(harness.enginesByRoom['target-a']!.stopCount, 0);
     expect(find.text(i18n('mirror_danmaku_save_failed')), findsOneWidget);
   });
 }
