@@ -20,6 +20,8 @@ class VersionUtil {
 
   static final String projectUrl = 'https://github.com/$updateOwner/$updateRepository';
 
+  static final String latestReleaseUrl = '$projectUrl/releases/latest';
+
   static final String issuesUrl = '$projectUrl/issues';
 
   static final String githubUrl = 'https://github.com/$updateOwner';

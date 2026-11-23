@@ -1,37 +1,29 @@
 {
-  "version": "3.1.21",
-  "build_number": 4110,
-  "version_num": 301214110,
-  "android_abis": [
-    "armeabi-v7a",
-    "arm64-v8a",
-    "x86_64"
-  ],
-  "version_desc": "version: 3.1.21\n版本更新：\n- 同步弹幕支持同时接收多个直播间的弹幕（最多 9 个目标），每个目标可单独启停、重试和删除。",
+  "version": "3.1.22",
+  "build_number": 4111,
+  "version_num": 301224111,
+  "android_abis": ["arm64-v8a"],
+  "version_desc": "version: 3.1.22\n版本更新：\n- 取消自动检查更新，手动更新打开本仓库最新 Release。\n- Android 与 Windows 版本统一。",
   "prerelease": false,
-  "download_url": "https://github.com/liuchuancong/pure_live/releases/tag/v3.1.21",
+  "download_url": "https://github.com/crazylei12/pure_live/releases/tag/v3.1.22",
   "platforms": {
     "android": {
-      "version": "3.1.21",
-      "build_number": 4110,
-      "version_num": 301214110,
-      "version_desc": "version: 3.1.21\n版本更新：\n- 同步弹幕支持同时接收多个直播间的弹幕（最多 9 个目标），每个目标可单独启停、重试和删除。",
+      "version": "3.1.22",
+      "build_number": 4111,
+      "version_num": 301224111,
+      "version_desc": "version: 3.1.22\n版本更新：\n- 取消自动检查更新，手动更新打开本仓库最新 Release。\n- Android 与 Windows 版本统一。",
       "prerelease": false,
-      "download_url": "https://github.com/liuchuancong/pure_live/releases/tag/v3.1.21",
-      "android_abis": [
-        "armeabi-v7a",
-        "arm64-v8a",
-        "x86_64"
-      ]
+      "download_url": "https://github.com/crazylei12/pure_live/releases/tag/v3.1.22",
+      "android_abis": ["arm64-v8a"]
     },
     "windows": {
-      "version": "3.1.21",
-      "build_number": 4110,
-      "version_num": 301214110,
-      "version_desc": "version: 3.1.21\n版本更新：\n- 同步弹幕支持同时接收多个直播间的弹幕（最多 9 个目标），每个目标可单独启停、重试和删除。",
+      "version": "3.1.22",
+      "build_number": 4111,
+      "version_num": 301224111,
+      "version_desc": "version: 3.1.22\n版本更新：\n- 取消自动检查更新，手动更新打开本仓库最新 Release。\n- Android 与 Windows 版本统一。",
       "prerelease": false,
-      "download_url": "https://github.com/liuchuancong/pure_live/releases/tag/v3.1.21",
-      "windows_msix_available": true
+      "download_url": "https://github.com/crazylei12/pure_live/releases/tag/v3.1.22",
+      "windows_msix_available": false
     },
     "linux": {
       "version": "3.1.19",

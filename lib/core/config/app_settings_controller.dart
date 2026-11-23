@@ -47,7 +47,7 @@ class AppSettingsController extends GetxController {
   final RxInt asmrSleepMinutes = hiveInt('asmrSleepMinutes', 60);
   final RxBool enableRotateScreen = hiveBool('enableRotateScreen', false);
   final RxBool enableScreenKeepOn = hiveBool('enableScreenKeepOn', true);
-  final RxBool enableAutoCheckUpdate = hiveBool('enableAutoCheckUpdate', true);
+  final RxBool enableAutoCheckUpdate = hiveBool('enableAutoCheckUpdate', false);
   final RxBool useGitHubOriginForUpdates = hiveBool('useGitHubOriginForUpdates', false);
   final RxBool enableFullScreenDefault = hiveBool('enableFullScreenDefault', false);
   final RxBool showSplashPage = hiveBool('showSplashPage', true);
@@ -228,7 +228,7 @@ class AppSettingsController extends GetxController {
       ),
       'enableRotateScreen': typed<bool>(json['enableRotateScreen'] ?? false),
       'enableScreenKeepOn': typed<bool>(json['enableScreenKeepOn'] ?? true),
-      'enableAutoCheckUpdate': typed<bool>(json['enableAutoCheckUpdate'] ?? true),
+      'enableAutoCheckUpdate': typed<bool>(json['enableAutoCheckUpdate'] ?? false),
       'useGitHubOriginForUpdates': typed<bool>(json['useGitHubOriginForUpdates'] ?? false),
       'enableFullScreenDefault': typed<bool>(json['enableFullScreenDefault'] ?? false),
       'showSplashPage': typed<bool>(json['showSplashPage'] ?? true),
@@ -276,7 +276,7 @@ class AppSettingsController extends GetxController {
       'asmrSleepMinutes': (((app['asmrSleepMinutes'] as num?)?.toInt() ?? 60).clamp(1, maxSleepMinutes)).toInt(),
       'enableRotateScreen': app['enableRotateScreen'] ?? false,
       'enableScreenKeepOn': app['enableScreenKeepOn'] ?? true,
-      'enableAutoCheckUpdate': app['enableAutoCheckUpdate'] ?? true,
+      'enableAutoCheckUpdate': app['enableAutoCheckUpdate'] ?? false,
       'useGitHubOriginForUpdates': app['useGitHubOriginForUpdates'] ?? false,
       'enableFullScreenDefault': app['enableFullScreenDefault'] ?? false,
       'showSplashPage': app['showSplashPage'] ?? true,

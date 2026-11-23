@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:async';
-import 'dart:developer';
 
 import 'package:flutter/services.dart';
 import 'package:pure_live/core/index.dart';
@@ -13,7 +12,6 @@ import 'package:pure_live/core/platform/initial_room_handoff.dart';
 import 'package:pure_live/core/player/models/player_engine.dart';
 import 'package:pure_live/domains/live/presentation/popular/popular_page.dart';
 import 'package:pure_live/domains/live/presentation/favorite/favorite_page.dart';
-import 'package:pure_live/features/about/widgets/version_dialog.dart';
 import 'package:pure_live/domains/recorder/presentation/pages/recorder/recorder_page.dart';
 import 'package:pure_live/domains/live/presentation/favorite/favorite_controller.dart';
 import 'package:pure_live/domains/live/domain/global_player_service.dart';
@@ -21,29 +19,7 @@ import 'package:pure_live/domains/live/presentation/popular/popular_controller.d
 import 'package:pure_live/domains/live/presentation/areas/areas_controller.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({
-    super.key,
-    this.updateCheckDelay = const Duration(seconds: 2),
-    this.initializePackageInfo,
-    this.checkForUpdate,
-    this.hasNewVersion,
-    this.updatePromptBuilder,
-  });
-
-  @visibleForTesting
-  final Duration updateCheckDelay;
-
-  @visibleForTesting
-  final Future<void> Function()? initializePackageInfo;
-
-  @visibleForTesting
-  final Future<bool> Function()? checkForUpdate;
-
-  @visibleForTesting
-  final bool Function()? hasNewVersion;
-
-  @visibleForTesting
-  final WidgetBuilder? updatePromptBuilder;
+  const HomePage({super.key});
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -51,7 +27,6 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
   Timer? _resumeRefreshTimer;
-  Timer? _updateCheckTimer;
   final FavoriteController favoriteController = Get.find<FavoriteController>();
   late final VoidCallback _favoriteTabListener;
   Worker? _savedMenuWorker;
@@ -96,15 +71,7 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
       }
     });
 
-    // Give the visible room snapshot first use of the network and build
-    // isolate. The update check is low-priority background work and previously
-    // competed with the cold-start room verification and image requests.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _updateCheckTimer = Timer(widget.updateCheckDelay, () {
-        if (mounted) unawaited(_checkForStartupUpdate());
-      });
-    });
+    unawaited(VersionUtil.initPackageInfo());
 
     _favoriteTabListener = () {
       if (mounted) {
@@ -164,7 +131,6 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
     if (_selectedIndex < 0 || _selectedIndex >= HomeMenu.values.length) return;
     final menu = HomeMenu.values[_selectedIndex];
     _resumeRefreshTimer?.cancel();
-    _updateCheckTimer?.cancel();
     _resumeRefreshTimer = Timer(const Duration(milliseconds: 450), () {
       if (!mounted) return;
       if (menu == HomeMenu.popular && Get.isRegistered<PopularController>()) {
@@ -204,26 +170,6 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
       setState(() => _selectedIndex = index);
     }
     favoriteController.tabBottomIndex.value = index;
-  }
-
-  Future<void> _checkForStartupUpdate() async {
-    try {
-      await (widget.initializePackageInfo ?? VersionUtil.initPackageInfo)();
-      if (!mounted) return;
-      final checkForUpdate = widget.checkForUpdate ?? VersionUtil().checkUpdate;
-      final succeeded = await checkForUpdate();
-      final hasNewVersion = widget.hasNewVersion ?? VersionUtil.hasNewVersion;
-      if (!mounted || !succeeded || !SettingsService.to.app.enableAutoCheckUpdate.v || !hasNewVersion()) {
-        return;
-      }
-      await showDialog<void>(
-        context: context,
-        useRootNavigator: true,
-        builder: widget.updatePromptBuilder ?? (_) => const NewVersionDialog(),
-      );
-    } catch (error, stackTrace) {
-      log('Startup update check skipped: $error', name: 'HomePage', error: error, stackTrace: stackTrace);
-    }
   }
 
   void onBackButtonPressed(bool didPop, _) {
@@ -297,7 +243,6 @@ class _HomePageState extends State<HomePage> with AutomaticKeepAliveClientMixin,
     favoriteController.tabBottomIndex.removeListener(_favoriteTabListener);
     _savedMenuWorker?.dispose();
     _resumeRefreshTimer?.cancel();
-    _updateCheckTimer?.cancel();
     super.dispose();
   }
 }

@@ -1,3 +1,23 @@
+# Pure Live v3.1.22
+
+Android 与 Windows 统一为 **3.1.22+4111**。
+
+## 本次变更
+
+- 取消启动时的自动更新检查和更新提示，不再后台请求更新源；旧配置中的自动检查开关也不会恢复此行为。
+- 移除设置中的自动检查更新开关；「关于 → 在线更新」改为在外部浏览器打开 `https://github.com/crazylei12/pure_live/releases/latest`。
+- 更新仓库配置指向本维护仓库，统一 Android / Windows / MSIX 元数据。
+- 保留上一版多目标同步弹幕等已有功能。
+
+## 交付范围
+
+- Android：正式签名的 arm64-v8a Release APK。
+- Windows：x64 Release 安装程序及便携 ZIP；未做 Authenticode 签名。
+- 本次不发布 Linux、macOS、iOS 或 Android 其他 ABI，不操作已安装应用及用户数据。
+- 构建、签名和自动化验证结果见 [交付说明](docs/RELEASE_3_1_22_RESULT.md)。本次不包含新一轮设备/GUI 验收。
+
+---
+
 # Pure Live v3.1.21（维护分支）
 
 v3.1.21 build 4110 扩展同步弹幕：一个直播间最多可同时接收 9 个其他直播间的聊天弹幕，每个目标独立连接、启停、重试和删除，旧版单目标配置自动迁移。本版本已在本机完成 Android arm64-v8a 与 Windows x64 Release 构建。

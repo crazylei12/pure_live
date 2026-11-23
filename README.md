@@ -10,7 +10,7 @@
 
 A third-party live stream aggregator built with Flutter.
 
-[![Latest Release](https://img.shields.io/github/v/release/liuchuancong/pure_live?color=success&label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC)](https://github.com/liuchuancong/pure_live/releases/latest)
+[![Latest Release](https://img.shields.io/github/v/release/crazylei12/pure_live?color=success&label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC)](https://github.com/crazylei12/pure_live/releases/latest)
 [![Stars](https://img.shields.io/github/stars/liuchuancong/pure_live?color=yellow)](https://github.com/liuchuancong/pure_live/stargazers)
 [![Downloads](https://img.shields.io/github/downloads/liuchuancong/pure_live/total?style=flat-square&color=orange&label=%E4%B8%8B%E8%BD%BD)](https://github.com/liuchuancong/pure_live/releases)
 [![License](https://img.shields.io/github/license/liuchuancong/pure_live?color=blue)](LICENSE)
@@ -64,7 +64,9 @@ A third-party live stream aggregator built with Flutter.
 
 ## 📥 下载安装
 
-前往 [**GitHub Releases**](https://github.com/liuchuancong/pure_live/releases/latest) 获取最新安装包，并使用同一 Release 的 `SHA256SUMS.txt` 校验完整性。
+本维护分支 Android 与 Windows 当前版本统一为 **3.1.22+4111**。前往 [**GitHub Releases**](https://github.com/crazylei12/pure_live/releases/latest) 获取最新安装包，并使用同一 Release 的校验文件核对完整性。
+
+应用不再自动检查更新；「关于 → 在线更新」会在外部浏览器打开本仓库最新正式 Release。
 
 | 平台 | 安装包 | 系统要求 |
 | --- | --- | --- |

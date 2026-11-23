@@ -14,6 +14,7 @@ class AboutPage extends StatefulWidget {
 
 class _AboutPageState extends State<AboutPage> {
   bool _openingProject = false;
+  bool _openingRelease = false;
 
   @override
   Widget build(BuildContext context) {
@@ -97,7 +98,7 @@ class _AboutPageState extends State<AboutPage> {
                 ),
               ),
               stackTrailingOnNarrow: true,
-              onTap: () => Get.toNamed(RoutePath.kVersionPage),
+              onTap: () => unawaited(_openLatestRelease()),
             ),
             context.buildTile(
               icon: Remix.history_line,
@@ -129,6 +130,19 @@ class _AboutPageState extends State<AboutPage> {
         ],
       ),
     );
+  }
+
+  Future<void> _openLatestRelease() async {
+    if (_openingRelease) return;
+    _openingRelease = true;
+    try {
+      final opened = await launchUrl(Uri.parse(VersionUtil.latestReleaseUrl), mode: LaunchMode.externalApplication);
+      if (!opened) ToastUtil.show(i18n('external_browser_not_opened'));
+    } catch (_) {
+      ToastUtil.show(i18n('external_browser_not_opened'));
+    } finally {
+      _openingRelease = false;
+    }
   }
 
   Future<void> _openProject() async {
